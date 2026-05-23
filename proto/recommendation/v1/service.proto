@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package recommendation.v1;
+
+option go_package = "github.com/wunderkennd/personalization/gen/go/recommendation/v1";
+
+import "recommendation/v1/domain.proto";
+
+// ProfileFeatureService provides user profile features from DynamoDB.
+service ProfileFeatureService {
+  rpc GetProfileFeatures(GetProfileFeaturesRequest) returns (GetProfileFeaturesResponse);
+}
+
+message GetProfileFeaturesRequest {
+  string profile_id = 1;
+  string territory = 2;
+}
+
+message GetProfileFeaturesResponse {
+  repeated WatchedItem watched_items = 1;
+  repeated MyListItem my_list_items = 2;
+  repeated ContinueWatchingItem continue_watching_items = 3;
+}
+
+// PageRecommendationService personalizes a whole page.
+service PageRecommendationService {
+  rpc GetRecommendedPage(GetRecommendedPageRequest) returns (GetRecommendedPageResponse);
+}
+
+message GetRecommendedPageRequest {
+  string profile_id = 1;
+  string territory = 2;
+  string page_id = 3;
+}
+
+message GetRecommendedPageResponse {
+  Page page = 1;
+}

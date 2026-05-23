@@ -1,0 +1,164 @@
+syntax = "proto3";
+
+package experimentation.common.v1;
+
+option go_package = "github.com/org/experimentation/gen/go/common/v1;commonv1";
+
+// MetricStakeholder identifies who benefits from a metric (ADR-014).
+// Drives provider-side metric computation and multi-stakeholder analysis.
+enum MetricStakeholder {
+  METRIC_STAKEHOLDER_UNSPECIFIED = 0;
+  // User-side metric: measures subscriber experience (e.g., watch time, churn).
+  METRIC_STAKEHOLDER_USER = 1;
+  // Provider-side metric: measures content provider outcomes (e.g., catalog coverage,
+  // long-tail impression share, Gini coefficient).
+  METRIC_STAKEHOLDER_PROVIDER = 2;
+  // Platform-side metric: measures platform health (e.g., revenue, infrastructure cost).
+  METRIC_STAKEHOLDER_PLATFORM = 3;
+}
+
+// MetricAggregationLevel determines the unit of observation for analysis (ADR-014).
+enum MetricAggregationLevel {
+  METRIC_AGGREGATION_LEVEL_UNSPECIFIED = 0;
+  // Aggregated per user. Standard M4a analysis unit.
+  METRIC_AGGREGATION_LEVEL_USER = 1;
+  // Aggregated per experiment per time window (e.g., catalog-level metrics).
+  // Bootstrap CIs computed; one observation per time window, not per user.
+  METRIC_AGGREGATION_LEVEL_EXPERIMENT = 2;
+  // Aggregated per content provider. Requires content_catalog Delta Lake join.
+  METRIC_AGGREGATION_LEVEL_PROVIDER = 3;
+}
+
+// MetricType determines the aggregation method M3 uses.
+enum MetricType {
+  METRIC_TYPE_UNSPECIFIED = 0;
+  // Mean of numeric values (e.g., average watch time).
+  METRIC_TYPE_MEAN = 1;
+  // Proportion of users triggering the event (e.g., conversion rate).
+  METRIC_TYPE_PROPORTION = 2;
+  // Ratio of two sums (e.g., total revenue / total sessions). Delta method for variance.
+  METRIC_TYPE_RATIO = 3;
+  // Count of events per user (e.g., sessions per week).
+  METRIC_TYPE_COUNT = 4;
+  // Percentile of a numeric distribution (e.g., p95 TTFF).
+  METRIC_TYPE_PERCENTILE = 5;
+  // Custom SQL-defined metric. M3 executes the custom_sql field.
+  METRIC_TYPE_CUSTOM = 6;
+  // Mean of value_column over rows matching a Spark SQL filter (ADR-026 Phase 1).
+  METRIC_TYPE_FILTERED_MEAN = 7;
+  // Composition of other metrics via arithmetic operator (ADR-026 Phase 1).
+  METRIC_TYPE_COMPOSITE = 8;
+  // Count of an event type within a time window after first exposure (ADR-026 Phase 1).
+  METRIC_TYPE_WINDOWED_COUNT = 9;
+}
+
+// MetricDefinition is the specification for a metric computed by M3.
+message MetricDefinition {
+  string metric_id = 1;
+  string name = 2;
+  string description = 3;
+  MetricType type = 4;
+  // Event type that feeds this metric. Must match MetricEvent.event_type.
+  string source_event_type = 5;
+  // For RATIO metrics: the numerator event type.
+  string numerator_event_type = 6;
+  // For RATIO metrics: the denominator event type.
+  string denominator_event_type = 7;
+  // For PERCENTILE metrics: which percentile (e.g., 0.95).
+  double percentile = 8;
+  // For CUSTOM metrics: Spark SQL expression. Logged to query_log.
+  string custom_sql = 9;
+  // Whether lower values are better (true for TTFF, rebuffer) or
+  // higher values are better (false for watch time, conversion).
+  // Used by guardrails to determine breach direction.
+  bool lower_is_better = 10;
+  // If set, this metric serves as a surrogate input and links to a target metric.
+  string surrogate_target_metric_id = 11;
+  // Whether this is a QoE metric (computed from qoe_events topic).
+  bool is_qoe_metric = 12;
+  // CUPED covariate metric ID. If set, M4a applies CUPED variance reduction
+  // using this metric's pre-experiment values as the covariate.
+  string cuped_covariate_metric_id = 13;
+  // Minimum detectable effect size. Used by M5 for power calculations.
+  double minimum_detectable_effect = 14;
+
+  // Phase 5 extensions (ADR-014).
+  // Stakeholder this metric measures. Drives multi-stakeholder analysis in M4a.
+  MetricStakeholder stakeholder = 15;
+  // Unit of observation for this metric. Drives M3 computation pipeline selection.
+  MetricAggregationLevel aggregation_level = 16;
+
+  // Per-type config for new types (ADR-026 Phase 1). Existing types continue
+  // to use their flat sibling fields; a future ADR may consolidate them here.
+  oneof type_config {
+    FilteredMeanConfig filtered_mean = 17;
+    CompositeConfig composite = 18;
+    WindowedCountConfig windowed_count = 19;
+  }
+}
+
+// FilteredMeanConfig — config for METRIC_TYPE_FILTERED_MEAN. The metric is the
+// AVG of value_column over rows whose event_type matches
+// MetricDefinition.source_event_type AND that pass filter_sql.
+message FilteredMeanConfig {
+  // Spark SQL fragment AND'd into the scan WHERE clause.
+  // Validated in M5 (#433): column allowlist + parse check.
+  // Example: "platform = 'mobile' AND duration_ms > 5000"
+  string filter_sql = 1;
+
+  // Column from source_event_type to AVG over.
+  // Must be a numeric column in the source_event_type schema. Validated in M5 (#433).
+  // Example: "duration_ms"
+  string value_column = 2;
+}
+
+// CompositeConfig — config for METRIC_TYPE_COMPOSITE. The metric is computed
+// from per-user values of other (already-computed) metrics via the operator.
+//
+// Operand arity rules (enforced by M5 #433):
+//   ADD, MULTIPLY, WEIGHTED_SUM:    >= 2 operands, evaluated left-to-right
+//   SUBTRACT, DIVIDE:               exactly 2 operands (operands[0] op operands[1])
+//   UNSPECIFIED:                    invalid
+// Cycle detection over metric_id references also lives in M5.
+message CompositeConfig {
+  // Operands referenced by metric_id. Cycle detection lives in M5 (#433).
+  repeated CompositeOperand operands = 1;
+  // Arithmetic operator applied to operands. See operand arity rules above.
+  CompositeOperator operator = 2;
+}
+
+message CompositeOperand {
+  string metric_id = 1;
+  // Coefficient. Required for WEIGHTED_SUM (must be > 0); ignored for other operators.
+  // Note: proto3 has no custom default mechanism for scalar fields — `double`
+  // unset deserialises to 0.0, not 1.0. WEIGHTED_SUM operands must therefore
+  // set `weight` explicitly; M5 (#433) and the renderer reject `weight <= 0`
+  // when operator = WEIGHTED_SUM.
+  double weight = 2;
+}
+
+enum CompositeOperator {
+  COMPOSITE_OPERATOR_UNSPECIFIED = 0;
+  COMPOSITE_OPERATOR_ADD = 1;
+  COMPOSITE_OPERATOR_SUBTRACT = 2;
+  COMPOSITE_OPERATOR_MULTIPLY = 3;
+  COMPOSITE_OPERATOR_DIVIDE = 4;
+  // Linear combination: sum(operand_i * weight_i). Use ADD when all weights are 1.0.
+  COMPOSITE_OPERATOR_WEIGHTED_SUM = 5;
+}
+
+// WindowedCountConfig — config for METRIC_TYPE_WINDOWED_COUNT. The metric is
+// COUNT of events of event_type whose event_timestamp falls within
+// [exposure_ts, exposure_ts + window_hours) for each exposed user.
+message WindowedCountConfig {
+  // Event type to count. Validated against the event catalog in M5 (#433).
+  string event_type = 1;
+
+  // Optional Spark SQL fragment AND'd into the scan WHERE clause.
+  // Validated in M5 (#433): column allowlist + parse check.
+  string filter_sql = 2;
+
+  // Time window relative to the user's first exposure (hours).
+  // Must be > 0; M5 (#433) rejects window_hours <= 0.
+  int32 window_hours = 3;
+}

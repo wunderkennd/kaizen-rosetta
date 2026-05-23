@@ -1,0 +1,31 @@
+syntax = "proto3";
+package kaizen.protobuf.metadata.program.v4;
+
+// Reconstructed minimal proto definition for the entity.program.v4 Kafka topic.
+// Only includes fields actually consumed by the dynamic-promotions sync engine.
+// Wire-compatible with the full schema — prost silently ignores unknown fields.
+
+message ProgramMessage {
+  Program program = 1;
+}
+
+message Program {
+  string entity_type = 1;
+  repeated Attribute attributes = 2;
+  repeated Title titles = 3;
+}
+
+message Attribute {
+  string type = 1;
+  repeated string value = 2;
+}
+
+message Title {
+  string type = 1;
+  repeated Localization localizations = 2;
+}
+
+message Localization {
+  string language = 1;
+  string value = 2;
+}

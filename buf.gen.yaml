@@ -1,0 +1,24 @@
+version: v2
+managed:
+  enabled: true
+  override:
+    - file_option: go_package_prefix
+      value: github.com/wunderkennd/kaizen-rosetta/gen/go
+    - file_option: java_package_prefix
+      value: com.wunderkennd.kaizen.proto
+plugins:
+  # Go (connect-go for services, protobuf for messages)
+  - remote: buf.build/protocolbuffers/go
+    out: gen/go
+    opt: paths=source_relative
+  - remote: buf.build/connectrpc/go
+    out: gen/go
+    opt: paths=source_relative
+
+  # TypeScript (connect-web)
+  - remote: buf.build/connectrpc/es
+    out: gen/ts
+    opt: target=ts
+  - remote: buf.build/bufbuild/es
+    out: gen/ts
+    opt: target=ts

@@ -1,0 +1,503 @@
+syntax = "proto3";
+
+package experimentation.analysis.v1;
+
+import "google/protobuf/timestamp.proto";
+import "experimentation/common/v1/experiment.proto";
+import "experimentation/common/v1/lifecycle.proto";
+import "experimentation/common/v1/surrogate.proto";
+
+option go_package = "github.com/org/experimentation/gen/go/analysis/v1;analysisv1";
+
+// AnalysisService is implemented in Rust (M4a).
+// All statistical computation runs here. M6 UI reads results; never computes.
+// Uses experimentation-stats crate. Fail-fast on NaN/Infinity/overflow.
+service AnalysisService {
+  // Run or re-run analysis for an experiment. Returns full results.
+  rpc RunAnalysis(RunAnalysisRequest) returns (AnalysisResult);
+  // Get latest analysis results.
+  rpc GetAnalysisResult(GetAnalysisResultRequest) returns (AnalysisResult);
+  // Get interleaving-specific analysis (sign test, Bradley-Terry).
+  rpc GetInterleavingAnalysis(GetInterleavingAnalysisRequest) returns (InterleavingAnalysisResult);
+  // Get novelty effect detection results.
+  rpc GetNoveltyAnalysis(GetNoveltyAnalysisRequest) returns (NoveltyAnalysisResult);
+  // Get content interference analysis.
+  rpc GetInterferenceAnalysis(GetInterferenceAnalysisRequest) returns (InterferenceAnalysisResult);
+  // Get synthetic control analysis for QUASI experiments (ADR-023).
+  rpc GetSyntheticControlAnalysis(GetSyntheticControlAnalysisRequest) returns (SyntheticControlAnalysisResult);
+  // Get switchback temporal analysis for SWITCHBACK experiments (ADR-022).
+  rpc GetSwitchbackAnalysis(GetSwitchbackAnalysisRequest) returns (SwitchbackAnalysisResult);
+  // Get optimal traffic allocation across a portfolio of running experiments (ADR-019).
+  // Called by M5 to maximize portfolio-level information gain within a traffic budget.
+  // M4a uses power curves and accumulated effect estimates for portfolio optimization.
+  rpc GetPortfolioAllocation(GetPortfolioAllocationRequest) returns (GetPortfolioAllocationResponse);
+  // Portfolio power analysis: optimal alpha, annualized impact, traffic allocation (ADR-019).
+  rpc GetPortfolioPowerAnalysis(GetPortfolioPowerAnalysisRequest) returns (PortfolioPowerAnalysisResult);
+  // Offline RL doubly-robust OPE for long-term causal effects (ADR-017 Phase 2).
+  // Estimates policy value under a target policy using MDP trajectory data from M3's
+  // user_trajectories table. Combines Q-function + importance weighting for robustness.
+  rpc GetOrlAnalysis(GetOrlAnalysisRequest) returns (OrlAnalysisResult);
+}
+
+message RunAnalysisRequest {
+  string experiment_id = 1;
+  // Optional: override sequential testing method for this run.
+  // SEQUENTIAL_METHOD_UNSPECIFIED (default) = fixed-horizon t-test only.
+  // SEQUENTIAL_METHOD_AVLM: anytime-valid LM with regression adjustment (ADR-015).
+  experimentation.common.v1.SequentialMethod sequential_method = 2;
+  // Mixing variance τ² for AVLM/mSPRT martingale. 0.0 = use service default (0.5).
+  double tau_sq = 3;
+  // ADR-015: ID of the pre-experiment covariate metric stored in the cuped_covariate
+  // column by M3. When set with SEQUENTIAL_METHOD_AVLM, enables regression adjustment.
+  // When empty, AVLM falls back to mSPRT without covariate (x=0).
+  string cuped_covariate_metric_id = 4;
+  // ADR-020: Adaptive sample size configuration. When set, M4a runs an interim
+  // analysis and returns zone classification and recommended_n_per_arm.
+  experimentation.common.v1.AdaptiveSampleSizeConfig adaptive_sample_size_config = 5;
+  // ADR-027: TOST equivalence testing configuration. When set, M4a runs the
+  // Two One-Sided Tests procedure on the primary metric in addition to (or
+  // instead of) the standard superiority test. Result fields live on the
+  // MetricResult.equivalence_result message. When unset, no equivalence test
+  // is performed. Per-run override of Experiment.equivalence_test (field 33);
+  // the config message is defined in experimentation/common/v1/experiment.proto.
+  experimentation.common.v1.EquivalenceTestConfig equivalence_test = 6;
+}
+message GetAnalysisResultRequest { string experiment_id = 1; }
+message GetInterleavingAnalysisRequest { string experiment_id = 1; }
+message GetNoveltyAnalysisRequest { string experiment_id = 1; }
+message GetInterferenceAnalysisRequest { string experiment_id = 1; }
+message GetSyntheticControlAnalysisRequest { string experiment_id = 1; }
+message GetSwitchbackAnalysisRequest { string experiment_id = 1; }
+
+// MetricResult contains the treatment effect estimate for one metric, one variant.
+message MetricResult {
+  string metric_id = 1;
+  string variant_id = 2;
+  double control_mean = 3;
+  double treatment_mean = 4;
+  double absolute_effect = 5;
+  double relative_effect = 6;
+  double ci_lower = 7;
+  double ci_upper = 8;
+  double p_value = 9;
+  bool is_significant = 10;
+  // CUPED-adjusted values (if covariate configured).
+  double cuped_adjusted_effect = 11;
+  double cuped_ci_lower = 12;
+  double cuped_ci_upper = 13;
+  double variance_reduction_pct = 14;
+  // Sequential testing results (if configured).
+  SequentialResult sequential_result = 15;
+  // Per-lifecycle-segment results (if lifecycle stratification enabled).
+  repeated SegmentResult segment_results = 16;
+  // Session-level: both naive and clustered estimates.
+  SessionLevelResult session_level_result = 17;
+  // IPW-adjusted result for bandit experiments (when assignment_probability available).
+  IpwResult ipw_result = 18;
+
+  // Phase 5 extensions (ADR-018).
+  // GROW martingale e-value alongside p-value. Non-negative; large values = strong evidence.
+  double e_value = 19;
+  // Log e-value for numerical stability when e-values are very large.
+  double log_e_value = 20;
+
+  // ADR-027: TOST equivalence test result. Populated only when an
+  // EquivalenceTestConfig is supplied (via Experiment.equivalence_test or
+  // RunAnalysisRequest.equivalence_test). Absent for standard superiority-only
+  // analyses. Additive — does not affect the superiority fields above.
+  EquivalenceResult equivalence_result = 21;
+}
+
+// ADR-027: Two One-Sided Tests (TOST) equivalence test result.
+// Mirrors experimentation_stats::tost::TostResult. Populated by M4a on the
+// primary metric when an EquivalenceTestConfig is supplied. Equivalence is
+// declared (equivalent == true) iff the (1 - 2α) CI lies entirely within
+// (-delta, +delta), algebraically identical to p_tost < α.
+message EquivalenceResult {
+  // Point estimate of the difference treatment − control.
+  double point_estimate = 1;
+  // Standard error of the difference (Welch form: √(s²_T/n_T + s²_C/n_C)).
+  double std_error = 2;
+  // Welch-Satterthwaite degrees of freedom.
+  double df = 3;
+  // p-value for H₀₁: diff ≤ −delta (upper-tail one-sided test).
+  double p_lower = 4;
+  // p-value for H₀₂: diff ≥ +delta (lower-tail one-sided test).
+  double p_upper = 5;
+  // TOST p-value — max(p_lower, p_upper). Equivalence iff p_tost < alpha.
+  double p_tost = 6;
+  // Lower bound of the (1 - 2α) confidence interval for the difference.
+  double ci_lower = 7;
+  // Upper bound of the (1 - 2α) confidence interval for the difference.
+  double ci_upper = 8;
+  // True iff both one-sided tests reject at α, i.e. CI ⊂ (-delta, +delta).
+  bool equivalent = 9;
+  // The effective equivalence margin used for this test, after resolving
+  // delta_relative (delta_relative × control_mean) when set; otherwise the
+  // configured absolute delta. Always > 0.
+  double delta = 10;
+  // Control group mean (raw, pre-CUPED).
+  double control_mean = 11;
+  // Treatment group mean (raw, pre-CUPED).
+  double treatment_mean = 12;
+  // Estimated power to declare equivalence at the realized standard error,
+  // given delta and the canonical migration design assumption (true
+  // difference = 0). In [0, 1]. Computed by experimentation-stats; the M6
+  // power indicator renders this value (no statistics in TypeScript).
+  double achieved_power = 13;
+}
+
+message SequentialResult {
+  // Whether the effect has crossed the stopping boundary.
+  bool boundary_crossed = 1;
+  // Current alpha spent (cumulative across looks).
+  double alpha_spent = 2;
+  // Remaining alpha budget.
+  double alpha_remaining = 3;
+  // Current look number (1-indexed).
+  int32 current_look = 4;
+  // Adjusted p-value accounting for multiple looks.
+  double adjusted_p_value = 5;
+}
+
+message SegmentResult {
+  experimentation.common.v1.LifecycleSegment segment = 1;
+  double effect = 2;
+  double ci_lower = 3;
+  double ci_upper = 4;
+  double p_value = 5;
+  int64 sample_size = 6;
+}
+
+message SessionLevelResult {
+  double naive_se = 1;
+  double clustered_se = 2;
+  // Ratio of clustered variance to naive variance. Indicates design effect.
+  double design_effect = 3;
+  double naive_p_value = 4;
+  double clustered_p_value = 5;
+}
+
+// IPW-adjusted treatment effect for bandit experiments.
+// Populated when metric_summaries has an assignment_probability column.
+message IpwResult {
+  // IPW-adjusted treatment effect (Hájek estimator).
+  double effect = 1;
+  // Standard error of the IPW effect estimate (sandwich variance).
+  double se = 2;
+  double ci_lower = 3;
+  double ci_upper = 4;
+  double p_value = 5;
+  // Number of observations with clipped assignment probabilities.
+  int32 n_clipped = 6;
+  // Kish's effective sample size (accounts for variable weighting).
+  double effective_sample_size = 7;
+}
+
+// AdaptiveNInterimResult from promising-zone interim analysis (ADR-020).
+// Populated in AnalysisResult when AdaptiveSampleSizeConfig is present in RunAnalysisRequest.
+message AdaptiveNInterimResult {
+  // Zone classification: "favorable", "promising", or "futile".
+  string zone = 1;
+  // Conditional power CP(δ̂, σ²_B, n_max, α) at the current look.
+  double conditional_power = 2;
+  // For "promising" zone only: recommended per-arm n_max to restore target power.
+  // 0.0 for other zones.
+  double recommended_n_per_arm = 3;
+  // Blinded pooled variance σ²_B (Gould-Shih estimator, conservative).
+  double blinded_variance = 4;
+}
+
+// AnalysisResult is the top-level result for an experiment.
+message AnalysisResult {
+  string experiment_id = 1;
+  repeated MetricResult metric_results = 2;
+  // SRM check result.
+  SrmResult srm_result = 3;
+  // Surrogate projections (if surrogate model configured).
+  repeated experimentation.common.v1.SurrogateProjection surrogate_projections = 4;
+  // Cochran Q test for treatment effect heterogeneity across lifecycle segments.
+  double cochran_q_p_value = 5;
+  google.protobuf.Timestamp computed_at = 6;
+  // ADR-020: Adaptive sample size interim result. Only set when
+  // AdaptiveSampleSizeConfig was provided in RunAnalysisRequest.
+  AdaptiveNInterimResult adaptive_n_result = 7;
+}
+
+message SrmResult {
+  double chi_squared = 1;
+  double p_value = 2;
+  bool is_mismatch = 3;
+  map<string, int64> observed_counts = 4;
+  map<string, int64> expected_counts = 5;
+}
+
+// InterleavingAnalysisResult from sign test and Bradley-Terry model.
+message InterleavingAnalysisResult {
+  string experiment_id = 1;
+  // Per-algorithm win rates from sign test.
+  map<string, double> algorithm_win_rates = 2;
+  double sign_test_p_value = 3;
+  // Bradley-Terry strength estimates with confidence intervals.
+  repeated AlgorithmStrength algorithm_strengths = 4;
+  // Per-position engagement analysis.
+  repeated PositionAnalysis position_analyses = 5;
+  google.protobuf.Timestamp computed_at = 6;
+}
+
+message AlgorithmStrength {
+  string algorithm_id = 1;
+  double strength = 2;
+  double ci_lower = 3;
+  double ci_upper = 4;
+}
+
+message PositionAnalysis {
+  int32 position = 1;
+  map<string, double> algorithm_engagement_rates = 2;
+}
+
+// NoveltyAnalysisResult from exponential decay fitting.
+message NoveltyAnalysisResult {
+  string experiment_id = 1;
+  string metric_id = 2;
+  bool novelty_detected = 3;
+  double raw_treatment_effect = 4;
+  double projected_steady_state_effect = 5;
+  double novelty_amplitude = 6;
+  double decay_constant_days = 7;
+  // Whether daily effect has stabilized (within 10% of steady state for 7 days).
+  bool is_stabilized = 8;
+  double days_until_projected_stability = 9;
+  google.protobuf.Timestamp computed_at = 10;
+}
+
+// InterferenceAnalysisResult from content consumption analysis.
+message InterferenceAnalysisResult {
+  string experiment_id = 1;
+  bool interference_detected = 2;
+  double jensen_shannon_divergence = 3;
+  double jaccard_similarity_top_100 = 4;
+  double treatment_gini_coefficient = 5;
+  double control_gini_coefficient = 6;
+  double treatment_catalog_coverage = 7;
+  double control_catalog_coverage = 8;
+  // Titles with significant treatment/control consumption differences.
+  repeated TitleSpillover spillover_titles = 9;
+  google.protobuf.Timestamp computed_at = 10;
+
+  // Phase 5 feedback loop analysis (ADR-021).
+  // Whether feedback loop contamination was detected from model retraining events.
+  bool feedback_loop_detected = 11;
+  // Estimated bias in treatment effect due to feedback loop contamination.
+  double feedback_loop_bias_estimate = 12;
+  // Pearson correlation between training data contamination fraction and effect estimate
+  // across retraining events. High correlation indicates feedback loop distortion.
+  double contamination_effect_correlation = 13;
+  google.protobuf.Timestamp feedback_loop_computed_at = 14;
+}
+
+message TitleSpillover {
+  string content_id = 1;
+  double treatment_watch_rate = 2;
+  double control_watch_rate = 3;
+  double p_value = 4;
+}
+
+// SyntheticControlAnalysisResult from quasi-experimental analysis (ADR-023).
+// Produced by M4a experimentation-stats::synthetic_control module.
+message SyntheticControlAnalysisResult {
+  string experiment_id = 1;
+  // Method used for this analysis.
+  experimentation.common.v1.SyntheticControlMethod method = 2;
+  // Treatment effect estimate on the outcome metric.
+  double treatment_effect = 3;
+  double ci_lower = 4;
+  double ci_upper = 5;
+  // Placebo permutation p-value. Validates that treatment effect exceeds
+  // what would be observed for donor units.
+  double permutation_p_value = 6;
+  // Donor unit weights assigned by the SCM optimizer. Sum to 1.0, all >= 0.
+  // Key: donor_unit_id, Value: weight.
+  map<string, double> donor_weights = 7;
+  // Pre-treatment RMSPE: root mean squared prediction error measuring fit quality.
+  // Lower is better; M6 UI shows warning if RMSPE > 0.2.
+  double pre_treatment_rmspe = 8;
+  google.protobuf.Timestamp computed_at = 9;
+}
+
+// SwitchbackAnalysisResult from temporal alternation analysis (ADR-022).
+// Produced by M4a experimentation-stats::switchback module.
+message SwitchbackAnalysisResult {
+  string experiment_id = 1;
+  // Treatment effect estimate with HAC (Newey-West) standard errors.
+  double treatment_effect = 2;
+  double hac_se = 3;
+  double ci_lower = 4;
+  double ci_upper = 5;
+  double hac_p_value = 6;
+  // Randomization inference p-value.
+  // Exact permutation if planned_cycles <= 20; otherwise 10K Monte Carlo.
+  double ri_p_value = 7;
+  // Carryover diagnostic: lag-1 autocorrelation test p-value.
+  // p_value < 0.05 indicates significant carryover; extend washout period.
+  double carryover_p_value = 8;
+  bool carryover_detected = 9;
+  google.protobuf.Timestamp computed_at = 10;
+}
+
+// GetPortfolioAllocationRequest — sent by M5 to M4a (ADR-019).
+// M5 submits the set of running experiments; M4a returns optimal traffic splits.
+message GetPortfolioAllocationRequest {
+  // Experiment IDs to optimize allocation across. Must be non-empty.
+  repeated string experiment_ids = 1;
+  // Total traffic budget as a fraction [0.0, 1.0].
+  // Sum of returned allocated_fraction values will be <= total_traffic_budget.
+  double total_traffic_budget = 2;
+}
+
+// ExperimentAllocation is one entry in GetPortfolioAllocationResponse.
+message ExperimentAllocation {
+  string experiment_id = 1;
+  // Optimal traffic allocation fraction for this experiment. In [0.0, 1.0].
+  double allocated_fraction = 2;
+  // Whether M4a estimates sufficient evidence has accumulated to conclude this experiment.
+  // M5 uses this signal to trigger the CONCLUDING lifecycle transition.
+  bool can_conclude = 3;
+  // Estimated statistical power at the allocated traffic level and current sample size.
+  // In [0.0, 1.0]. M6 UI displays this per experiment.
+  double estimated_power = 4;
+}
+
+// GetPortfolioAllocationResponse — returned by M4a to M5 (ADR-019).
+message GetPortfolioAllocationResponse {
+  // One ExperimentAllocation per experiment_id in the request, in request order.
+  repeated ExperimentAllocation allocations = 1;
+  // Sum of all allocated_fraction values. Will be <= total_traffic_budget.
+  double total_allocated = 2;
+  google.protobuf.Timestamp computed_at = 3;
+}
+
+// ---------------------------------------------------------------------------
+// Portfolio power analysis (ADR-019)
+// ---------------------------------------------------------------------------
+
+// Request for portfolio-level power analysis.
+message GetPortfolioPowerAnalysisRequest {
+  // Historical win rate across the experiment program. Must be in (0, 1).
+  double prior_win_rate = 1;
+  // Target false discovery rate for the portfolio (e.g., 0.05).
+  double fdr_target = 2;
+  // Target statistical power per experiment (e.g., 0.80).
+  double target_power = 3;
+  // Parameters for annualised impact projection.
+  PortfolioImpactParams impact_params = 4;
+  // Per-experiment specifications for traffic allocation.
+  repeated PortfolioExperimentSpec experiments = 5;
+  // Fraction of total traffic available for all experiments combined.
+  double available_traffic_fraction = 6;
+}
+
+// Annualised impact projection parameters.
+message PortfolioImpactParams {
+  // Relative lift observed during the experiment (e.g., 0.02 = 2%).
+  double observed_lift_relative = 1;
+  // Baseline value of the primary metric per user per year.
+  double annual_baseline_per_user = 2;
+  // Total addressable user count.
+  int64 total_users = 3;
+  // Duration of the experiment in days.
+  double experiment_duration_days = 4;
+  // Fraction of total traffic assigned to the treatment arm(s).
+  double treatment_fraction = 5;
+}
+
+// Per-experiment specification for the traffic allocation optimiser.
+message PortfolioExperimentSpec {
+  string experiment_id = 1;
+  // Minimum detectable effect as a relative lift (e.g., 0.02 = 2%).
+  double mde_relative = 2;
+  // Expected mean of the primary metric in the control arm.
+  double baseline_mean = 3;
+  // Variance of the primary metric.
+  double baseline_variance = 4;
+  // Total number of variants including control (>= 2).
+  int32 n_variants = 5;
+}
+
+// Portfolio power analysis result (ADR-019).
+message PortfolioPowerAnalysisResult {
+  // Recommended per-experiment significance threshold. In (0, 1).
+  double optimal_alpha = 1;
+  // Projected annualised business impact (same unit as annual_baseline_per_user × total_users).
+  double annualized_impact = 2;
+  // Per-experiment traffic allocations.
+  repeated PortfolioTrafficAllocation traffic_allocations = 3;
+  // Expected portfolio-level FDR at the recommended alpha.
+  double expected_portfolio_fdr = 4;
+  google.protobuf.Timestamp computed_at = 5;
+}
+
+// Traffic allocation recommendation for one experiment.
+message PortfolioTrafficAllocation {
+  string experiment_id = 1;
+  // Fraction of total user traffic to assign (treatment + control combined).
+  double recommended_traffic_fraction = 2;
+  // Minimum users per arm to achieve min_power at optimal_alpha.
+  int64 required_n_per_arm = 3;
+}
+
+// ---------------------------------------------------------------------------
+// Offline RL doubly-robust OPE (ADR-017 Phase 2)
+// ---------------------------------------------------------------------------
+
+// Request for offline RL analysis using MDP trajectory data.
+message GetOrlAnalysisRequest {
+  string experiment_id = 1;
+  // Discount factor γ for future rewards. Must be in (0, 1]. Default: 0.99.
+  double gamma = 2;
+  // Maximum cumulative importance weight before clipping. Default: 10.0.
+  // High values preserve unbiasedness but increase variance.
+  double max_density_ratio = 3;
+  // Target policy probabilities for each action.
+  // For "always treat": [0.0, 1.0]. Must sum to 1.0.
+  repeated double target_policy = 4;
+  // Significance level for CI (e.g., 0.05). Default: 0.05.
+  double alpha = 5;
+}
+
+// Result of offline RL doubly-robust off-policy evaluation.
+// Implements Tran, Bibaut, Kallus (Netflix, ICML 2024) sequential DR estimator.
+message OrlAnalysisResult {
+  string experiment_id = 1;
+  // Estimated policy value under the target policy (DR estimator).
+  double effect = 2;
+  // Standard error (sandwich variance estimator).
+  double se = 3;
+  // Lower bound of (1-α) confidence interval.
+  double ci_lower = 4;
+  // Upper bound of (1-α) confidence interval.
+  double ci_upper = 5;
+  // Two-sided p-value (large-sample normal approximation).
+  double p_value = 6;
+  // Kish's effective sample size accounting for importance weighting.
+  // Low values indicate severe policy mismatch between target and logging.
+  double effective_n = 7;
+  // Maximum cumulative density ratio observed (before clipping).
+  // High values (>10) indicate significant distribution mismatch.
+  double max_observed_ratio = 8;
+  // Fraction of trajectory steps where the density ratio was clipped.
+  // High clipping (>10%) suggests the target and logging policies diverge.
+  double clipping_fraction = 9;
+  // Out-of-sample R² of the fitted Q-function.
+  // Low R² (<0.3) means the Q-function control variate provides limited
+  // variance reduction — the estimate relies more on importance weighting.
+  double q_function_r_squared = 10;
+  // Number of user trajectories used in the estimate.
+  int32 n_trajectories = 11;
+  // Direct-method-only estimate (Q-function alone, no importance weighting).
+  double dm_estimate = 12;
+  // Importance-weighting-only estimate (no Q-function control variate).
+  double ipw_estimate = 13;
+  google.protobuf.Timestamp computed_at = 14;
+}

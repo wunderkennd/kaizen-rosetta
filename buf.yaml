@@ -1,0 +1,17 @@
+version: v2
+modules:
+  - path: proto
+    name: buf.build/kaizen/rosetta
+lint:
+  use:
+    - STANDARD
+  except:
+    - RPC_RESPONSE_STANDARD_NAME
+    - RPC_REQUEST_RESPONSE_UNIQUE
+    - IMPORT_USED
+    - ENUM_VALUE_PREFIX
+  enum_zero_value_suffix: _UNSPECIFIED
+  service_suffix: Service
+breaking:
+  use:
+    - FILE

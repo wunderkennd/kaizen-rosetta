@@ -1,0 +1,105 @@
+syntax = "proto3";
+
+package recommendation.v1;
+
+option go_package = "github.com/wunderkennd/personalization/gen/go/recommendation/v1";
+
+import "recommendation/v1/domain.proto";
+
+// RecommendationEngineService is the internal gRPC API for the Rust recommendation
+// engine sidecar. It runs co-located in the same Kubernetes pod as the Go
+// page-recommender-svc and handles all performance-critical recommendation logic:
+// candidate generation, page-level ranking, and score transformation.
+//
+// Bind address: 127.0.0.1:50052 (localhost-only, not exposed to cluster)
+service RecommendationEngineService {
+  // Generate recommendation candidates for a set of collections.
+  // Dispatches to the appropriate rail recommender (ForYou, Top10, BYW, etc.)
+  // based on each collection's RailRecommenderType.
+  rpc GenerateCandidates(GenerateCandidatesRequest) returns (GenerateCandidatesResponse);
+
+  // Score and rank candidates at the page level.
+  // Applies pinning, de-duplication, and scoring algorithms across all rails.
+  rpc RankPage(RankPageRequest) returns (RankPageResponse);
+
+  // Transform raw ML prediction scores into dense-ranked relevance scores
+  // using the inverse-square-root formula: score = 1.0 / sqrt(rank).
+  rpc TransformScores(TransformScoresRequest) returns (TransformScoresResponse);
+
+  // Health check endpoint.
+  rpc Ping(PingRequest) returns (PingResponse);
+}
+
+// ---------- GenerateCandidates ----------
+
+message GenerateCandidatesRequest {
+  // The page configuration describing collections and their types.
+  Configuration configuration = 1;
+
+  // User profile features (watch history, my list, continue watching).
+  ProfileFeatures profile_features = 2;
+
+  // Pre-computed relevance scores from the ML prediction service.
+  RelevanceScores relevance_scores = 3;
+
+  // Territory/locale for catalog filtering.
+  string territory = 4;
+}
+
+message GenerateCandidatesResponse {
+  // Generated candidate lists, one per collection.
+  repeated CandidateList candidate_lists = 1;
+}
+
+// ---------- RankPage ----------
+
+message RankPageRequest {
+  // Candidate lists to rank at page level.
+  repeated CandidateList candidate_lists = 1;
+
+  // Relevance scores for scoring.
+  RelevanceScores relevance_scores = 2;
+
+  // Pin configuration for fixed-position items.
+  repeated PinConfig pin_configs = 3;
+
+  // Scoring algorithm to use.
+  ScorerType scorer_type = 4;
+
+  // Ranker configuration.
+  RankerConfig ranker_config = 5;
+}
+
+message RankPageResponse {
+  // Ranked and de-duplicated page rows.
+  repeated PageRow rows = 1;
+}
+
+// ---------- TransformScores ----------
+
+message TransformScoresRequest {
+  // Raw prediction scores from the ML service.
+  map<string, double> raw_scores = 1;
+}
+
+message TransformScoresResponse {
+  // Dense-ranked relevance scores.
+  RelevanceScores relevance_scores = 1;
+}
+
+// ---------- Ping ----------
+
+message PingRequest {}
+
+message PingResponse {
+  string status = 1;
+}
+
+// ---------- Enums ----------
+
+enum ScorerType {
+  SCORER_TYPE_UNSPECIFIED = 0;
+  SCORER_TYPE_WEIGHTED_AVERAGE = 1;
+  SCORER_TYPE_LOGARITHMIC = 2;
+  SCORER_TYPE_WINDOWED = 3;
+}

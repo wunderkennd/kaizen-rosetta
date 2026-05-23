@@ -1,0 +1,239 @@
+syntax = "proto3";
+
+package recommendation.v1;
+
+option go_package = "github.com/wunderkennd/personalization/gen/go/recommendation/v1";
+
+// ---------- Catalog ----------
+
+// CatalogItem represents a content item in the catalog (movie, series, episode).
+// Mapped from DynamoDB catalog table and S3 catalog CSV dumps.
+message CatalogItem {
+  // Primary key — unique content identifier.
+  string item_id = 1;
+
+  // Sort key — territory/locale code (e.g., "us", "gb", "de").
+  string territory = 2;
+
+  // Content metadata.
+  string title = 3;
+  ShowType show_type = 4;
+  repeated string genres = 5;
+  repeated string sub_genres = 6;
+  repeated string brands = 7;
+  repeated string packages = 8;
+  repeated string content_ratings = 9;
+  repeated string franchises = 10;
+  repeated string keywords = 11;
+
+  // Offerings (subscription tiers where available).
+  repeated Offering offerings = 12;
+
+  // ML embeddings (64-dimensional vector for similarity computation).
+  repeated double embeddings = 13;
+
+  // Popularity score (higher = more popular).
+  double popularity = 14;
+
+  // Average user rating.
+  double rating = 15;
+}
+
+enum ShowType {
+  SHOW_TYPE_UNSPECIFIED = 0;
+  SHOW_TYPE_MOVIE = 1;
+  SHOW_TYPE_SERIES = 2;
+  SHOW_TYPE_EPISODE = 3;
+  SHOW_TYPE_SPECIAL = 4;
+}
+
+message Offering {
+  string tier = 1;
+  string start_date = 2;
+  string end_date = 3;
+}
+
+// ---------- Profile Features ----------
+
+// ProfileFeatures aggregates all user-specific features needed for recommendation.
+// Retrieved from DynamoDB via ProfileFeatureProvider.
+message ProfileFeatures {
+  repeated WatchedItem watched_items = 1;
+  repeated MyListItem my_list_items = 2;
+  repeated ContinueWatchingItem continue_watching_items = 3;
+}
+
+message WatchedItem {
+  string item_id = 1;
+  string watched_on = 2;           // ISO 8601 date
+  double percent_watched = 3;       // 0.0 - 1.0
+  int64 seconds_watched = 4;
+  bool is_series = 5;
+  int32 most_recent_season = 6;
+  int32 most_recent_episode = 7;
+}
+
+message MyListItem {
+  string item_id = 1;
+  string added_on = 2;             // ISO 8601 date
+}
+
+message ContinueWatchingItem {
+  string item_id = 1;
+  double percent_watched = 2;
+  int64 seconds_watched = 3;
+  string last_watched_on = 4;      // ISO 8601 date
+  int32 season_number = 5;
+  int32 episode_number = 6;
+}
+
+// ---------- Configuration ----------
+
+// Configuration contains everything needed to build a page:
+// page structure, collections, rating policies, pin/lab configs.
+message Configuration {
+  string page_id = 1;
+  PageStructure page_structure = 2;
+  RatingPolicy rating_policy = 3;
+  repeated PinConfig pin_configs = 4;
+  repeated LabConfig lab_configs = 5;
+}
+
+message PageStructure {
+  string page_id = 1;
+  string page_name = 2;
+  repeated Container containers = 3;
+}
+
+message Container {
+  string container_id = 1;
+  string container_name = 2;
+  repeated Collection collections = 3;
+}
+
+message Collection {
+  string collection_id = 1;
+  string collection_name = 2;
+  RailRecommenderType recommender_type = 3;
+  string feature_id = 4;            // Used to look up ML model features
+  repeated string pre_populated_items = 5;
+  int32 max_items = 6;
+}
+
+enum RailRecommenderType {
+  RAIL_RECOMMENDER_TYPE_UNSPECIFIED = 0;
+  RAIL_RECOMMENDER_TYPE_RECOMMENDED_FOR_YOU = 1;
+  RAIL_RECOMMENDER_TYPE_BECAUSE_YOU_WATCHED = 2;
+  RAIL_RECOMMENDER_TYPE_TOP_10 = 3;
+  RAIL_RECOMMENDER_TYPE_KNOWLEDGE_GRAPH = 4;
+  RAIL_RECOMMENDER_TYPE_MY_LIST = 5;
+  RAIL_RECOMMENDER_TYPE_CONTINUE_WATCHING = 6;
+  RAIL_RECOMMENDER_TYPE_GENERIC = 7;
+  RAIL_RECOMMENDER_TYPE_NO_OP = 8;
+}
+
+message RatingPolicy {
+  repeated string allowed_ratings = 1;
+  string maturity_level = 2;
+}
+
+message PinConfig {
+  string collection_id = 1;
+  map<int32, string> pinned_positions = 2;  // position → itemId
+  bool bounded = 3;
+}
+
+message LabConfig {
+  string experiment_id = 1;
+  string treatment_id = 2;
+  map<string, string> parameters = 3;
+  bool is_control = 4;
+}
+
+// ---------- Relevance Scores ----------
+
+// RelevanceScores contains ML-derived relevance scores for catalog items.
+// Transformed from raw prediction responses via RelevanceScoreTransformer.
+message RelevanceScores {
+  // itemId → relevance score (dense-ranked, 0.0 - 1.0).
+  map<string, double> scores = 1;
+
+  // The ML model ID used for scoring.
+  string model_id = 2;
+}
+
+// ---------- Candidates ----------
+
+// Candidate represents a single recommended content item.
+message Candidate {
+  string item_id = 1;
+  double score = 2;
+  string source = 3;               // Which recommender produced this
+  bool is_pinned = 4;
+  int32 pinned_position = 5;
+  CatalogItem catalog_item = 6;    // Enriched catalog metadata
+}
+
+// CandidateList is a list of candidates for a single collection/rail.
+message CandidateList {
+  string collection_id = 1;
+  string collection_name = 2;
+  RailRecommenderType recommender_type = 3;
+  repeated Candidate candidates = 4;
+}
+
+// ---------- Page ----------
+
+// Page is the final assembled recommendation page returned to the client.
+message Page {
+  string page_id = 1;
+  repeated PageRow rows = 2;
+  string cohort_key = 3;            // Cache key for cohort-based caching
+}
+
+// PageRow represents a single row/rail on the recommendation page.
+message PageRow {
+  string collection_id = 1;
+  string collection_name = 2;
+  repeated Candidate items = 3;
+}
+
+// ---------- Ranker Config ----------
+
+message RankerConfig {
+  int32 max_items_per_row = 1;
+  int32 max_rows = 2;
+  bool enable_dedup = 3;
+  DeDupStrategy dedup_strategy = 4;
+  int32 dedup_window_size = 5;
+}
+
+enum DeDupStrategy {
+  DEDUP_STRATEGY_UNSPECIFIED = 0;
+  DEDUP_STRATEGY_WINDOWED = 1;
+  DEDUP_STRATEGY_GLOBAL = 2;
+}
+
+// ---------- Labs / Experimentation ----------
+
+message Decision {
+  string experiment_id = 1;
+  string treatment_id = 2;
+  map<string, string> config = 3;
+  bool is_active = 4;
+  bool is_control = 5;
+  ExperimentType experiment_type = 6;
+}
+
+enum ExperimentType {
+  EXPERIMENT_TYPE_UNSPECIFIED = 0;
+  EXPERIMENT_TYPE_AB_TEST = 1;
+  EXPERIMENT_TYPE_FEATURE_FLAG = 2;
+  EXPERIMENT_TYPE_MULTI_ARMED_BANDIT = 3;
+}
+
+message FeatureFlag {
+  string flag_id = 1;
+  bool enabled = 2;
+  map<string, string> parameters = 3;
+}

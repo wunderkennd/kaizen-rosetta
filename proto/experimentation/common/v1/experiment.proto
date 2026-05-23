@@ -1,0 +1,364 @@
+syntax = "proto3";
+
+package experimentation.common.v1;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+import "experimentation/common/v1/interleaving.proto";
+import "experimentation/common/v1/lifecycle.proto";
+import "experimentation/common/v1/bandit.proto";
+
+option go_package = "github.com/org/experimentation/gen/go/common/v1;commonv1";
+
+// ExperimentState includes both stable and transitional states.
+// Transitional states (STARTING, CONCLUDING) prevent race conditions
+// during validation and final analysis. See ADR-005.
+enum ExperimentState {
+  EXPERIMENT_STATE_UNSPECIFIED = 0;
+  // Stable: configured but not yet validated or started.
+  EXPERIMENT_STATE_DRAFT = 1;
+  // Transitional: validating config, warming bandit policy,
+  // confirming metric availability, checking lifecycle segment power.
+  // M1 Assignment Service MUST NOT serve assignments for this experiment.
+  EXPERIMENT_STATE_STARTING = 2;
+  // Stable: actively collecting data. For bandits, policy is adapting.
+  EXPERIMENT_STATE_RUNNING = 3;
+  // Transitional: running final analysis, creating policy snapshots,
+  // computing surrogate projections, generating IPW estimates.
+  // M6 UI MUST show progress indicator; result queries MUST return 503.
+  EXPERIMENT_STATE_CONCLUDING = 4;
+  // Stable: analysis complete, results available, no longer collecting data.
+  EXPERIMENT_STATE_CONCLUDED = 5;
+  // Stable: retained for historical reference. Results still queryable.
+  EXPERIMENT_STATE_ARCHIVED = 6;
+  // Stable: traffic paused due to guardrail breach or manual operator action.
+  // M1 MUST NOT serve assignments. Resume via ResumeExperiment.
+  EXPERIMENT_STATE_PAUSED = 7;
+}
+
+// ExperimentType determines which assignment mode M1 uses,
+// which analysis methods M4a applies, and which validation gates M5 enforces.
+enum ExperimentType {
+  EXPERIMENT_TYPE_UNSPECIFIED = 0;
+  EXPERIMENT_TYPE_AB = 1;
+  EXPERIMENT_TYPE_MULTIVARIATE = 2;
+  // Interleaving: M1 constructs merged lists via Team Draft / Optimized.
+  // M4a runs sign test + Bradley-Terry. Requires InterleavingConfig.
+  EXPERIMENT_TYPE_INTERLEAVING = 3;
+  // Session-level: M1 hashes session_id. M4a uses clustered SEs.
+  // Requires SessionConfig.
+  EXPERIMENT_TYPE_SESSION_LEVEL = 4;
+  // Playback QoE: M3 computes QoE metrics. M4a cross-references with engagement.
+  // Requires at least one QoE guardrail metric.
+  EXPERIMENT_TYPE_PLAYBACK_QOE = 5;
+  // Multi-armed bandit: M1 delegates to M4b. M4a runs IPW-adjusted analysis.
+  // Requires BanditConfig.
+  EXPERIMENT_TYPE_MAB = 6;
+  // Contextual bandit: M1 delegates to M4b with context features.
+  // Requires BanditConfig with context_feature_keys.
+  EXPERIMENT_TYPE_CONTEXTUAL_BANDIT = 7;
+  // Cumulative holdout: permanent baseline group measuring total algorithmic lift.
+  // M5 enforces no auto-conclusion. Requires is_cumulative_holdout = true.
+  EXPERIMENT_TYPE_CUMULATIVE_HOLDOUT = 8;
+  // Meta-experiment: randomize over objective parameterizations (ADR-013).
+  // M1 hashes user to variant; each variant uses a different reward objective.
+  // Requires MetaExperimentConfig.
+  EXPERIMENT_TYPE_META = 9;
+  // Switchback: temporal alternation design (ADR-022).
+  // M1 assigns based on (current_time, block_duration, cluster_attribute).
+  // Requires SwitchbackConfig.
+  EXPERIMENT_TYPE_SWITCHBACK = 10;
+  // Quasi-experiment: synthetic control for non-randomized designs (ADR-023).
+  // M4a runs synthetic control analysis on panel data.
+  // Requires QuasiExperimentConfig.
+  EXPERIMENT_TYPE_QUASI = 11;
+}
+
+// GuardrailAction determines platform behavior on guardrail metric breach.
+// Default is AUTO_PAUSE per Spotify-inspired safe-by-default policy. See ADR-008.
+enum GuardrailAction {
+  GUARDRAIL_ACTION_UNSPECIFIED = 0;
+  // DEFAULT: M5 pauses experiment (traffic -> 0%), alerts owner.
+  GUARDRAIL_ACTION_AUTO_PAUSE = 1;
+  // Owner must explicitly opt-in. Audited in experiment audit trail.
+  GUARDRAIL_ACTION_ALERT_ONLY = 2;
+}
+
+// SequentialMethod determines which sequential testing approach M4a uses.
+// See ADR-004 for rationale on offering both mSPRT and GST.
+enum SequentialMethod {
+  SEQUENTIAL_METHOD_UNSPECIFIED = 0;
+  // Always-valid p-values with arbitrary peeking. Lower power but max flexibility.
+  SEQUENTIAL_METHOD_MSPRT = 1;
+  // Group sequential with O'Brien-Fleming spending. Higher power; requires
+  // pre-commitment to planned_looks.
+  SEQUENTIAL_METHOD_GST_OBF = 2;
+  // Group sequential with Pocock spending. Equal stopping probability per look.
+  SEQUENTIAL_METHOD_GST_POCOCK = 3;
+  // Anytime-valid linear model (ADR-015): GROW/REGROW confidence sequences with
+  // OLS regression adjustment. Subsumes CUPED + mSPRT into unified framework.
+  // O(1) incremental updates via 6 running sufficient statistics.
+  SEQUENTIAL_METHOD_AVLM = 4;
+}
+
+// SessionConfig is required when type = SESSION_LEVEL.
+// M1 hashes session_id instead of user_id for variant assignment.
+message SessionConfig {
+  // Attribute name in the event schema that contains the session identifier.
+  // M5 validates this resolves in the event schema during STARTING.
+  string session_id_attribute = 1;
+  // If true, same user may see different variants across sessions.
+  bool allow_cross_session_variation = 2;
+  // Minimum sessions per user before including in analysis.
+  // Filters out users with too few sessions for reliable clustered estimates.
+  int32 min_sessions_per_user = 3;
+}
+
+// SequentialTestConfig controls sequential analysis in M4a.
+message SequentialTestConfig {
+  SequentialMethod method = 1;
+  // For GST only: number of pre-specified analysis looks.
+  // Ignored for mSPRT. Must be >= 2 for GST.
+  int32 planned_looks = 2;
+  // Total Type I error budget across all looks. Default 0.05.
+  double overall_alpha = 3;
+}
+
+// GuardrailConfig defines a metric threshold that triggers protective action.
+message GuardrailConfig {
+  // Metric ID to monitor. Must exist in the experiment's metric set.
+  string metric_id = 1;
+  // Threshold value. Breach direction determined by metric definition
+  // (e.g., rebuffer_rate breach = exceeds threshold; engagement breach = falls below).
+  double threshold = 2;
+  // How many consecutive checks must breach before action triggers.
+  // Default 1 (immediate). Higher values reduce false alarms for noisy metrics.
+  int32 consecutive_breaches_required = 3;
+}
+
+// Variant defines a single treatment arm within an experiment.
+message Variant {
+  string variant_id = 1;
+  string name = 2;
+  // Traffic allocation as fraction (0.0 to 1.0). All variants must sum to 1.0.
+  double traffic_fraction = 3;
+  // Whether this is the control variant. Exactly one variant must be control.
+  bool is_control = 4;
+  // Opaque JSON payload delivered to the client SDK.
+  string payload_json = 5;
+}
+
+// Experiment is the top-level configuration entity managed by M5.
+message Experiment {
+  string experiment_id = 1;
+  string name = 2;
+  string description = 3;
+  string owner_email = 4;
+  ExperimentType type = 5;
+  ExperimentState state = 6;
+
+  // Variant definitions. Minimum 2 for A/B; minimum 1 for bandits (arms defined in BanditConfig).
+  repeated Variant variants = 7;
+
+  // Layer assignment. Experiments in the same layer share traffic; different layers are orthogonal.
+  string layer_id = 8;
+
+  // Metric configuration.
+  string primary_metric_id = 9;
+  repeated string secondary_metric_ids = 10;
+  repeated GuardrailConfig guardrail_configs = 11;
+  GuardrailAction guardrail_action = 12;
+
+  // Sequential testing. If unset, M4a uses fixed-horizon analysis.
+  SequentialTestConfig sequential_test_config = 13;
+
+  // Targeting. If unset, experiment targets all eligible users.
+  string targeting_rule_id = 14;
+
+  // Timestamps managed by M5. read-only for clients.
+  google.protobuf.Timestamp created_at = 15;
+  google.protobuf.Timestamp started_at = 16;
+  google.protobuf.Timestamp concluded_at = 17;
+
+  // SVOD-specific configurations. Set the one matching experiment type.
+  InterleavingConfig interleaving_config = 20;
+  SessionConfig session_config = 21;
+  string surrogate_model_id = 22;
+  LifecycleStratificationConfig lifecycle_config = 23;
+  BanditConfig bandit_config = 24;
+
+  // Cumulative holdout flag. When true, M5 enforces no auto-conclusion
+  // and Assignment Service prioritizes holdout assignment before layer allocation.
+  bool is_cumulative_holdout = 25;
+
+  // Hash salt. Auto-generated by M5 at creation. Used by M1 for deterministic bucketing.
+  string hash_salt = 26;
+
+  // Phase 5 type-specific configs. Set the one matching experiment type.
+  MetaExperimentConfig meta_experiment_config = 27;
+  SwitchbackConfig switchback_config = 28;
+  QuasiExperimentConfig quasi_experiment_config = 29;
+
+  // Phase 5 analysis configs.
+  AdaptiveSampleSizeConfig adaptive_sample_size_config = 30;
+  VarianceReductionConfig variance_reduction_config = 31;
+
+  // EwL classification. Set by M5 at CONCLUDED→ARCHIVED transition (ADR-019).
+  ExperimentLearning learning = 32;
+
+  // ADR-027: TOST equivalence testing configuration. When set, M5 validates
+  // at creation (delta > 0; MEAN/RATIO primary metric if delta_relative set)
+  // and M4a runs the Two One-Sided Tests procedure on the primary metric,
+  // populating MetricResult.equivalence_result. When unset, no equivalence
+  // test is performed and the standard superiority test alone is reported.
+  EquivalenceTestConfig equivalence_test = 33;
+}
+
+// SyntheticControlMethod selects the SCM algorithm M4a applies (ADR-023).
+enum SyntheticControlMethod {
+  SYNTHETIC_CONTROL_METHOD_UNSPECIFIED = 0;
+  // Classic synthetic control (Abadie et al.): constrained weight optimization.
+  SYNTHETIC_CONTROL_METHOD_CLASSIC = 1;
+  // Augmented SCM with Ridge de-biasing for better extrapolation.
+  SYNTHETIC_CONTROL_METHOD_AUGMENTED = 2;
+  // Synthetic difference-in-differences (Arkhangelsky et al.).
+  SYNTHETIC_CONTROL_METHOD_SYNTHETIC_DID = 3;
+  // CausalImpact: Bayesian structural time series (Brodersen et al.).
+  SYNTHETIC_CONTROL_METHOD_CAUSAL_IMPACT = 4;
+}
+
+// ExperimentLearning classifies the knowledge yield of a concluded experiment.
+// Required at CONCLUDED→ARCHIVED transition as part of the EwL framework (ADR-019).
+enum ExperimentLearning {
+  EXPERIMENT_LEARNING_UNSPECIFIED = 0;
+  // Significant positive effect confirmed; treatment should be shipped.
+  EXPERIMENT_LEARNING_WINNER = 1;
+  // No significant effect; null result with sufficient power.
+  EXPERIMENT_LEARNING_NULL = 2;
+  // Significant negative effect; do not ship.
+  EXPERIMENT_LEARNING_LOSER = 3;
+  // Inconclusive: insufficient power or unexpected behavior.
+  EXPERIMENT_LEARNING_INCONCLUSIVE = 4;
+  // Directional signal below significance threshold; follow-up experiment warranted.
+  EXPERIMENT_LEARNING_DIRECTIONAL = 5;
+}
+
+// MetaExperimentConfig is required when type = META (ADR-013).
+// Randomizes over reward objective parameterizations to identify which
+// objective function best correlates with long-term business outcomes.
+message MetaExperimentConfig {
+  // Base bandit algorithm run under each variant's parameterization.
+  BanditAlgorithm base_algorithm = 1;
+  // Per-variant reward objective configs. Exactly one entry per variant.
+  repeated MetaVariantObjective variant_objectives = 2;
+  // Metric IDs tracked for cross-variant business outcome analysis in M4a.
+  repeated string outcome_metric_ids = 3;
+}
+
+// MetaVariantObjective maps a variant to its reward objective parameterization.
+message MetaVariantObjective {
+  string variant_id = 1;
+  // Reward weights for this parameterization. Must sum to 1.0.
+  // Key: metric_id, Value: weight.
+  map<string, double> reward_weights = 2;
+}
+
+// SwitchbackConfig is required when type = SWITCHBACK (ADR-022).
+// Defines temporal alternation design parameters.
+message SwitchbackConfig {
+  // Duration of each on/off treatment block. Must be >= 1 hour.
+  google.protobuf.Duration block_duration = 1;
+  // Number of planned alternation cycles. Must be >= 4.
+  int32 planned_cycles = 2;
+  // Attribute for cluster-level assignment (e.g., "market_id").
+  // If empty, the entire user base switches simultaneously.
+  string cluster_attribute = 3;
+  // Washout period between blocks to allow carryover effects to decay.
+  // If unset, no washout is applied.
+  google.protobuf.Duration washout_period = 4;
+}
+
+// QuasiExperimentConfig is required when type = QUASI (ADR-023).
+// Configures synthetic control analysis for non-randomized designs.
+message QuasiExperimentConfig {
+  // Identifier of the treated unit (e.g., market ID, region, user cohort).
+  string treated_unit_id = 1;
+  // Donor unit IDs used to construct the synthetic control.
+  repeated string donor_unit_ids = 2;
+  // Start of the pre-treatment period. M5 validates panel data exists from here.
+  google.protobuf.Timestamp pre_treatment_start = 3;
+  // End of pre-treatment / start of treatment intervention.
+  google.protobuf.Timestamp treatment_start = 4;
+  // Outcome metric for synthetic control weight optimization.
+  string outcome_metric_id = 5;
+  // Synthetic control method M4a applies.
+  SyntheticControlMethod method = 6;
+}
+
+// AdaptiveSampleSizeConfig enables promising-zone adaptive sample size design (ADR-020).
+// M5 schedules interim analysis at interim_fraction × planned_duration.
+// M4a classifies the zone and M5 acts accordingly.
+message AdaptiveSampleSizeConfig {
+  // Fraction of planned duration at which the interim analysis is triggered.
+  // Default 0.5 (halfway through).
+  double interim_fraction = 1;
+  // Conditional power lower bound for the "promising" zone. Default 0.5.
+  double promising_zone_lower = 2;
+  // Conditional power lower bound for the "favorable" zone. Default 0.8.
+  double favorable_zone_lower = 3;
+  // Maximum allowed experiment duration multiplier if promising zone is reached.
+  // Default 2.0 (can double the planned duration).
+  double max_extension_factor = 4;
+}
+
+// VarianceReductionConfig enables ML-assisted variance reduction (ADR-015).
+// M3 trains a covariate model during STARTING; M4a uses predictions as
+// covariates in the AVLM regression-adjusted confidence sequence.
+message VarianceReductionConfig {
+  // Pre-experiment feature IDs used to train the covariate prediction model.
+  repeated string covariate_feature_ids = 1;
+  // Number of cross-fitting folds for MLRATE. Default 5.
+  int32 cross_fitting_folds = 2;
+  // If true, use AVLM anytime-valid confidence sequences.
+  // If false, use standard fixed-horizon CUPED adjustment.
+  // Default true.
+  bool use_avlm = 3;
+}
+
+// ADR-027: TOST equivalence test configuration.
+// Drives the Two One-Sided Tests procedure for proving a treatment is
+// *equivalent* to control within ±delta (in the metric's natural units).
+// Used by M4a for infrastructure migration experiments where the business
+// question is "safe to ship" rather than "better than control."
+// Carried on Experiment (field 33) so M5 validates at creation and M4a
+// reads it at analysis time; also overridable per-run via RunAnalysisRequest.
+message EquivalenceTestConfig {
+  // Equivalence margin in the metric's natural units. Must be > 0.
+  // Treatment is declared equivalent if the effect lies within [-delta, +delta].
+  double delta = 1;
+  // Optional: express delta as a fraction of the control mean
+  // (e.g., 0.02 = "within 2% of control"). When set, M4a recomputes delta
+  // at analysis time as `delta_relative * control_mean` and uses that in
+  // place of the absolute value above. Only meaningful for MEAN / RATIO metrics.
+  optional double delta_relative = 2;
+  // Per-side significance level. Typical value 0.05 yields a 90% TOST CI.
+  // Each one-sided test is performed at this α; equivalence is declared iff
+  // both tests reject, which is equivalent to the (1 - 2α) CI lying entirely
+  // within (-delta, +delta).
+  double alpha = 3;
+}
+
+// AnnualizedImpact projects the annual business value of a concluded experiment.
+// Computed by M5 at CONCLUDED state using surrogate projections and traffic data (ADR-019).
+message AnnualizedImpact {
+  string experiment_id = 1;
+  // Annualized relative effect on the primary metric.
+  double primary_metric_annual_effect = 2;
+  double annual_effect_ci_lower = 3;
+  double annual_effect_ci_upper = 4;
+  // Estimated unique users impacted per year.
+  int64 annual_users_impacted = 5;
+  // If true, projection is based on a surrogate model rather than observed primary metric.
+  bool based_on_surrogate = 6;
+  google.protobuf.Timestamp computed_at = 7;
+}
