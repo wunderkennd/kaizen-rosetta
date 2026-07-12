@@ -73,7 +73,7 @@ definitions {
   normalization: AUDIENCE_NORMALIZATION_LOWERCASE
   sensitivity: AUDIENCE_SENSITIVITY_NON_SENSITIVE
   owner: "client-platform"
-  description: "Controlled lowercase device category, such as phone, tablet, TV, or web."
+  description: "Controlled lowercase device category, such as phone, tablet, tv, or web."
 }
 definitions {
   key: "locale"
