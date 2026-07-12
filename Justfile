@@ -21,9 +21,11 @@ descriptor:
 
 fixtures:
     python3 scripts/check_fixture_shape.py
+    python3 -m unittest scripts/test_check_fixture_shape.py
 
 check:
     buf format --diff --exit-code
     buf lint
     buf build
     python3 scripts/check_fixture_shape.py
+    python3 -m unittest scripts/test_check_fixture_shape.py
