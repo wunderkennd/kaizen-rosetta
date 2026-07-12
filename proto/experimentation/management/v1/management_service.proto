@@ -5,6 +5,7 @@ package experimentation.management.v1;
 import "experimentation/common/v1/experiment.proto";
 import "experimentation/common/v1/layer.proto";
 import "experimentation/common/v1/metric.proto";
+import "experimentation/common/v1/metricql_diagnostic.proto";
 import "experimentation/common/v1/surrogate.proto";
 import "experimentation/common/v1/targeting.proto";
 import "google/protobuf/empty.proto";
@@ -37,6 +38,27 @@ service ExperimentManagementService {
   rpc GetMetricDefinition(GetMetricDefinitionRequest) returns (experimentation.common.v1.MetricDefinition);
   rpc ListMetricDefinitions(ListMetricDefinitionsRequest) returns (ListMetricDefinitionsResponse);
 
+  // MigrateMetricDefinition (ADR-026 Phase 3 / #437) — Lock L7 two-step
+  // apply contract. Operators call this from `custom_migrator apply` once
+  // a candidate's shadow run has been APPROVED by M3.
+  //
+  // The handler enforces (in this order):
+  //   1. new_metric.type != CUSTOM (InvalidArgument).
+  //   2. new_metric.metric_id != old_metric_id (InvalidArgument).
+  //   3. old_metric_id exists AND its type is CUSTOM (InvalidArgument).
+  //   4. validate_metric_definition(new_metric) passes — same validator
+  //      used by CreateMetricDefinition (InvalidArgument).
+  //   5. shadow_run_result_id resolves to an APPROVED row via M3's
+  //      GetShadowResults (FailedPrecondition if not APPROVED; Unavailable
+  //      if M3 itself errors).
+  //
+  // On success, a single atomic transaction inserts the new metric into
+  // metric_definitions and an audit row into metric_migrations. On any
+  // unique-constraint collision the call returns AlreadyExists. The old
+  // CUSTOM row is NOT deleted — it remains for read-compat / audit per
+  // ADR-026 Phase 3 non-goals.
+  rpc MigrateMetricDefinition(MigrateMetricDefinitionRequest) returns (MigrateMetricDefinitionResponse);
+
   // Layer management.
   rpc CreateLayer(CreateLayerRequest) returns (experimentation.common.v1.Layer);
   rpc GetLayer(GetLayerRequest) returns (experimentation.common.v1.Layer);
@@ -60,6 +82,24 @@ service ExperimentManagementService {
   // Returns per-experiment traffic allocation recommendations, conflict detection,
   // and priority-weighted variance budget for all RUNNING experiments in a layer.
   rpc GetPortfolioAllocation(GetPortfolioAllocationRequest) returns (GetPortfolioAllocationResponse);
+
+  // MetricQL live linting (ADR-026 Phase 2 / #436). Returns the diagnostic
+  // bag for a candidate MetricQL expression without persisting anything.
+  // Used by the M6 editor for ~500ms-debounced live linting.
+  //
+  // Tighter latency budget than CreateMetricDefinition: clients should send
+  // a request with a 2s deadline; the handler honors `tonic::Request::deadline()`.
+  rpc ValidateMetricql(ValidateMetricqlRequest) returns (ValidateMetricqlResponse);
+
+  // PreviewMetricDefinition (ADR-026 Phase 2 / #436) — proxies M6 → M5 → M3.
+  // M5 forwards the request to M3's CompileMetricqlPreview, returning the
+  // compiled Spark SQL + diagnostics unchanged. Wrapped at M5 for SDK
+  // boundary consistency (all M6 RPCs hit M5; M5 owns experiment-scoped
+  // auth + the metric catalog).
+  //
+  // Honors the incoming deadline: M5 propagates remaining time budget to M3.
+  // Clients should send a request with a 5s deadline.
+  rpc PreviewMetricDefinition(PreviewMetricDefinitionRequest) returns (PreviewMetricDefinitionResponse);
 }
 
 // --- Config Streaming ---
@@ -134,6 +174,85 @@ message ListMetricDefinitionsRequest {
 message ListMetricDefinitionsResponse {
   repeated experimentation.common.v1.MetricDefinition metrics = 1;
   string next_page_token = 2;
+}
+
+// --- MigrateMetricDefinition (ADR-026 Phase 3 / #437) ---
+
+// MigrateMetricDefinition — Lock L7 two-step apply contract. Migrates a
+// CUSTOM (raw-SQL) metric to a structured / MetricQL replacement once its
+// shadow run has been APPROVED by M3. See the rpc comment in
+// ExperimentManagementService above for the full precondition order.
+message MigrateMetricDefinitionRequest {
+  // The CUSTOM metric being deprecated. MUST exist + MUST have type=CUSTOM.
+  string old_metric_id = 1;
+  // The replacement metric definition. MUST NOT have type=CUSTOM.
+  // MUST have metric_id != old_metric_id.
+  experimentation.common.v1.MetricDefinition new_metric = 2;
+  // The result_id returned by M3's PromoteShadowResult (which equals the
+  // shadow_id of the promoted run — see metrics_service.proto). M5 verifies
+  // via M3's GetShadowResults RPC that this resolves to an APPROVED
+  // metric_shadow_runs row before creating the new metric. Encodes the
+  // L7 two-step gate.
+  string shadow_run_result_id = 3;
+  // Operator identifier for the audit log (e.g., user email or service id).
+  string operator = 4;
+}
+
+message MigrateMetricDefinitionResponse {
+  // The metric_id of the newly-created replacement metric (echo of
+  // request.new_metric.metric_id).
+  string new_metric_id = 1;
+  // The migration_id of the audit-log row in metric_migrations.
+  string migration_id = 2;
+  // RFC 3339 timestamp the migration was committed (server time).
+  string applied_at = 3;
+}
+
+// --- PreviewMetricDefinition (ADR-026 Phase 2 / #436) ---
+
+// PreviewMetricDefinition — compile a MetricQL expression to its Spark SQL
+// equivalent via M3's CompileMetricqlPreview. M5 proxies the request,
+// scoping the KnownMetricIDs lookup to the experiment on M3's side.
+// No side effects; safe to call at the editor's preview cadence.
+message PreviewMetricDefinitionRequest {
+  // Scopes the KnownMetricIDs lookup on M3. Empty string = global scope:
+  // M3 builds its known set from the full metric_definitions catalog so the
+  // editor's preview surface can compile expressions before an experiment
+  // exists (mirrors ValidateMetricql). Set to a specific experiment id to
+  // scope to that experiment.
+  string experiment_id = 1;
+  // The MetricQL source text to compile. Required.
+  string metricql_expression = 2;
+}
+
+message PreviewMetricDefinitionResponse {
+  // The compiled Spark SQL. Empty when diagnostics is non-empty.
+  string compiled_sql = 1;
+  // Parse + semantic diagnostics. Empty when compiled_sql is populated.
+  repeated experimentation.common.v1.MetricqlDiagnostic diagnostics = 2;
+}
+
+// --- ValidateMetricql (ADR-026 Phase 2 / #436) ---
+
+// ValidateMetricql — parse + analyze a candidate MetricQL expression
+// against the experiment's metric catalog. No side effects; safe to call
+// at the editor's debounce cadence (~500ms per keystroke pause).
+message ValidateMetricqlRequest {
+  // Scopes the known-metric-ids lookup. Empty string = global scope:
+  // the validator builds known_metric_ids from the full metric_definitions
+  // table. Set to a specific experiment id to scope to that experiment.
+  string experiment_id = 1;
+  // The MetricQL source text to validate. Empty source returns one
+  // diagnostic "empty expression".
+  string metricql_expression = 2;
+}
+
+message ValidateMetricqlResponse {
+  // Parse + semantic diagnostics. Empty when the expression is valid.
+  repeated experimentation.common.v1.MetricqlDiagnostic diagnostics = 1;
+  // The @metric_ref IDs the expression depends on. Populated on success
+  // (empty diagnostics); informational for the M6 editor preview path.
+  repeated string referenced_metric_ids = 2;
 }
 
 // --- Layer ---

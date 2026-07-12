@@ -50,6 +50,10 @@ enum MetricType {
   METRIC_TYPE_COMPOSITE = 8;
   // Count of an event type within a time window after first exposure (ADR-026 Phase 1).
   METRIC_TYPE_WINDOWED_COUNT = 9;
+  // MetricQL expression-based metric (ADR-026 Phase 2). The expression in
+  // MetricDefinition.metricql_expression is parsed + validated at M5 create
+  // time and compiled to Spark SQL by M3 at scheduling time.
+  METRIC_TYPE_METRICQL = 10;
 }
 
 // MetricDefinition is the specification for a metric computed by M3.
@@ -95,6 +99,19 @@ message MetricDefinition {
     CompositeConfig composite = 18;
     WindowedCountConfig windowed_count = 19;
   }
+
+  // ADR-026 Phase 2: MetricQL expression source text.
+  // The expression is parsed + validated by M5 at create/update time and
+  // compiled to Spark SQL by M3 at scheduling time.
+  //
+  // Mutually exclusive with `custom_sql` and `type_config` — at most one of
+  // these three may be set on any MetricDefinition. Validation enforced at
+  // both M5 (creation) and M3 (rendering, defense-in-depth).
+  //
+  // Stored as TEXT in metric_definitions table (no JSONB needed; the AST is
+  // re-parsed on each scheduling pass — parsing is fast and avoids the
+  // version-skew tax of storing parsed AST).
+  string metricql_expression = 20;
 }
 
 // FilteredMeanConfig — config for METRIC_TYPE_FILTERED_MEAN. The metric is the
