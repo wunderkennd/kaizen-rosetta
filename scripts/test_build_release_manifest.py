@@ -17,7 +17,8 @@ BASELINE_BSR_MODULE_COMMIT = os.environ.get(
     "RELEASE_MANIFEST_TEST_BSR_COMMIT",
     "3d978f388d4242f3b3c8e663465b85fd",
 )
-DESCRIPTOR_SHA256 = "a" * 64
+DESCRIPTOR_BYTES = b"deterministic descriptor fixture\n"
+DESCRIPTOR_SHA256 = __import__("hashlib").sha256(DESCRIPTOR_BYTES).hexdigest()
 PINNED_GENERATORS = """\
 version: v2
 plugins:
@@ -90,10 +91,16 @@ def generated_sdk_verifications(
         "moduleCommit": commit,
         "verifications": [
             {
+                "coordinate": sdk["coordinate"],
                 "evidence": "fixture exact-coordinate consumer passed",
+                "ecosystem": sdk["ecosystem"],
                 "generator": sdk["generator"],
+                "moduleCommit": sdk["moduleCommit"],
+                "pluginRevision": sdk["pluginRevision"],
+                "pluginVersion": sdk["pluginVersion"],
                 "status": "passed",
                 "usable": True,
+                "version": sdk["version"],
             }
             for sdk in metadata["sdks"]
         ],
@@ -175,9 +182,12 @@ class ReleaseManifestBuilderTests(unittest.TestCase):
 
         dist = directory / "dist"
         dist.mkdir()
+        (dist / "rosetta-descriptor.binpb").write_bytes(DESCRIPTOR_BYTES)
         (dist / "rosetta-descriptor.sha256").write_text(
             f"{descriptor_digest}\n" if descriptor_digest else ""
         )
+        bsr_descriptor = dist / "test-bsr-descriptor.binpb"
+        bsr_descriptor.write_bytes(DESCRIPTOR_BYTES)
         sdk_metadata = dist / "test-sdk-metadata.json"
         sdk_metadata.write_text(
             json.dumps(generated_sdk_metadata(buf_gen), sort_keys=True) + "\n"
@@ -196,6 +206,7 @@ class ReleaseManifestBuilderTests(unittest.TestCase):
             **os.environ,
             "PATH": f"{bin_directory}{os.pathsep}{os.environ['PATH']}",
             "BSR_MODULE_COMMIT": BASELINE_BSR_MODULE_COMMIT,
+            "BSR_DESCRIPTOR_FILE": str(bsr_descriptor),
             "BSR_SDK_METADATA_FILE": str(sdk_metadata),
             "BSR_SDK_VERIFICATION_FILE": str(sdk_verification),
         }
@@ -265,6 +276,29 @@ class ReleaseManifestBuilderTests(unittest.TestCase):
 
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("descriptor digest must not be all zeros", result.stderr)
+
+    def test_rejects_a_bsr_commit_with_different_descriptor_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            _, environment = self.make_project(root)
+            Path(environment["BSR_DESCRIPTOR_FILE"]).write_bytes(
+                b"descriptor from an unrelated valid BSR commit\n"
+            )
+
+            result = self.run_builder(root, environment)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("BSR descriptor does not match local descriptor", result.stderr)
+
+    def test_rejects_a_descriptor_digest_that_does_not_match_local_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            _, environment = self.make_project(root, descriptor_digest="a" * 64)
+
+            result = self.run_builder(root, environment)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("descriptor digest does not match local descriptor", result.stderr)
 
     def test_rejects_a_missing_git_commit(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -701,6 +735,8 @@ plugins:
                 }
             )
             record.pop("evidence")
+            record.pop("coordinate")
+            record.pop("version")
             verification_path.write_text(json.dumps(verification))
 
             result = self.run_builder(root, environment)
@@ -715,6 +751,39 @@ plugins:
             self.assertEqual(recorded["publicationStatus"], "unavailable")
             self.assertFalse(recorded["verification"]["usable"])
             self.assertNotIn("coordinate", recorded)
+
+    def test_rejects_unavailable_verification_with_coordinate_claims(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            _, environment = self.make_project(root)
+            metadata_path = Path(environment["BSR_SDK_METADATA_FILE"])
+            metadata = json.loads(metadata_path.read_text())
+            unavailable = metadata["sdks"][0]
+            unavailable["publicationStatus"] = "unavailable"
+            unavailable["reason"] = "plugin does not publish a packaged SDK"
+            unavailable.pop("coordinate")
+            unavailable.pop("version")
+            metadata_path.write_text(json.dumps(metadata))
+            verification_path = Path(environment["BSR_SDK_VERIFICATION_FILE"])
+            verification = json.loads(verification_path.read_text())
+            record = verification["verifications"][0]
+            record.update(
+                {
+                    "status": "not_applicable",
+                    "usable": False,
+                    "reason": "SDK is not published",
+                }
+            )
+            record.pop("evidence")
+            verification_path.write_text(json.dumps(verification))
+
+            result = self.run_builder(root, environment)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(
+                "unavailable generated SDK verification must not claim coordinate/version",
+                result.stderr,
+            )
 
     def test_records_published_but_unusable_generated_sdk(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -748,6 +817,90 @@ plugins:
             self.assertIsInstance(recorded["coordinate"], str)
             self.assertFalse(recorded["verification"]["usable"])
             self.assertEqual(recorded["verification"]["status"], "failed")
+
+    def test_rejects_verification_for_a_stale_coordinate(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            _, environment = self.make_project(root)
+            verification_path = Path(environment["BSR_SDK_VERIFICATION_FILE"])
+            verification = json.loads(verification_path.read_text())
+            verification["verifications"][0]["coordinate"] += "-stale"
+            verification_path.write_text(json.dumps(verification))
+
+            result = self.run_builder(root, environment)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("verification coordinate mismatch", result.stderr)
+
+    def test_rejects_verification_for_a_stale_sdk_version(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            _, environment = self.make_project(root)
+            verification_path = Path(environment["BSR_SDK_VERIFICATION_FILE"])
+            verification = json.loads(verification_path.read_text())
+            verification["verifications"][0]["version"] += ".stale"
+            verification_path.write_text(json.dumps(verification))
+
+            result = self.run_builder(root, environment)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("verification version mismatch", result.stderr)
+
+    def test_rejects_verification_for_a_stale_plugin_version(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            _, environment = self.make_project(root)
+            verification_path = Path(environment["BSR_SDK_VERIFICATION_FILE"])
+            verification = json.loads(verification_path.read_text())
+            verification["verifications"][0]["pluginVersion"] = "v9.9.9"
+            verification_path.write_text(json.dumps(verification))
+
+            result = self.run_builder(root, environment)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("verification plugin version mismatch", result.stderr)
+
+    def test_rejects_verification_for_a_stale_plugin_revision(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            _, environment = self.make_project(root)
+            verification_path = Path(environment["BSR_SDK_VERIFICATION_FILE"])
+            verification = json.loads(verification_path.read_text())
+            verification["verifications"][0]["pluginRevision"] = 99
+            verification_path.write_text(json.dumps(verification))
+
+            result = self.run_builder(root, environment)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("verification plugin revision mismatch", result.stderr)
+
+    def test_rejects_verification_for_a_stale_ecosystem(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            _, environment = self.make_project(root)
+            verification_path = Path(environment["BSR_SDK_VERIFICATION_FILE"])
+            verification = json.loads(verification_path.read_text())
+            verification["verifications"][0]["ecosystem"] = "npm"
+            verification_path.write_text(json.dumps(verification))
+
+            result = self.run_builder(root, environment)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("verification ecosystem mismatch", result.stderr)
+
+    def test_rejects_verification_for_a_stale_module_commit(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            _, environment = self.make_project(root)
+            verification_path = Path(environment["BSR_SDK_VERIFICATION_FILE"])
+            verification = json.loads(verification_path.read_text())
+            verification["verifications"][0]["moduleCommit"] = "f" * 32
+            verification_path.write_text(json.dumps(verification))
+
+            result = self.run_builder(root, environment)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("verification module commit mismatch", result.stderr)
 
     def test_rejects_missing_generated_sdk_verification(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

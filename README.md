@@ -82,6 +82,9 @@ The normal `just check` gate additionally validates all 48 audience fixtures,
 the schema-level provenance/finite-double cases, and the production registry
 TextProto. The registry must remain version `2026-07-12` with exactly the eight
 approved unique keys and complete, type-consistent operator metadata.
+Each audience fixture also carries portable binary Protobuf and canonical
+ProtoJSON vectors for its rule and context; the language-neutral consumer
+round-trip procedure is normative in [`docs/audience_v1.md`](docs/audience_v1.md).
 
 ### 4. Code Generation (SDKs)
 Rosetta handles centralized Go, TypeScript, and Python client/server SDK code generation:
@@ -164,11 +167,21 @@ By default the builder resolves metadata with authenticated
 `buf registry sdk info` calls against the supplied immutable commit. Tests inject a deterministic
 metadata document through `BSR_SDK_METADATA_FILE`; production releases must
 use live BSR resolution. `BSR_SDK_VERIFICATION_FILE` is always required and
-must contain one commit-bound verification for every pin. Only a passed
+must contain one commit-bound verification for every pin. Each verification
+repeats and must exactly match the resolved `generator`, `moduleCommit`,
+`ecosystem`, `pluginVersion`, and `pluginRevision`; a published SDK must also
+repeat its exact `coordinate` and `version`. An unavailable SDK omits
+coordinate/version, uses `status: not_applicable` and `usable: false`, and
+includes a reason. See
+[`tools/release/sdk-verification.example.json`](tools/release/sdk-verification.example.json)
+for the published shape. Only a passed
 exact-coordinate consumer may set `usable: true`; published but broken SDKs
 remain published with `usable: false` and a concrete failure reason. The builder refuses an
 empty or Git-shaped BSR commit and never infers a BSR commit from the local Git
-revision. It also refuses staged, unstaged, or untracked release-source changes,
+revision. Before writing a manifest it builds that exact immutable BSR ref and
+requires its descriptor bytes to match the local descriptor and recorded
+SHA-256 digest, preventing a valid but unrelated BSR commit from being claimed.
+It also refuses staged, unstaged, or untracked release-source changes,
 so the descriptor, generator pins, tests, and release documentation are
 reproducible from the recorded `gitCommit`. Generated `dist/` and `gen/` output
 and `.superpowers/` reports are excluded from that cleanliness gate. The

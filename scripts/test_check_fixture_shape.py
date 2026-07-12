@@ -8,6 +8,8 @@ import unittest
 from pathlib import Path
 from typing import Any
 
+from google.protobuf.json_format import ParseError
+
 
 CHECKER_PATH = Path(__file__).with_name("check_fixture_shape.py")
 NORMALIZED_EQUALS = {
@@ -102,6 +104,10 @@ def int64_case(
 
 
 class FixtureShapeTest(unittest.TestCase):
+    def test_checker_exposes_portable_wire_vector_builder(self) -> None:
+        checker = load_checker()
+        self.assertTrue(callable(getattr(checker, "build_expected_wire", None)))
+
     def run_checker(
         self,
         valid: list[dict[str, Any]] | None = None,
@@ -109,16 +115,29 @@ class FixtureShapeTest(unittest.TestCase):
         *,
         create_valid: bool = True,
         create_invalid: bool = True,
+        populate_wire: bool = True,
     ) -> None:
         checker = load_checker()
+        valid_cases = valid if valid is not None else [valid_case()]
+        invalid_cases = invalid if invalid is not None else [invalid_case()]
+        if populate_wire:
+            for case in [*valid_cases, *invalid_cases]:
+                if "expectedWire" in case or not {"rule", "context"} <= case.keys():
+                    continue
+                try:
+                    case["expectedWire"] = checker.build_expected_wire(
+                        case["rule"], case["context"]
+                    )
+                except ParseError:
+                    case["expectedWire"] = {}
         with tempfile.TemporaryDirectory() as temporary_directory:
             directory = Path(temporary_directory) / "conformance/audience/v1"
             directory.mkdir(parents=True)
             if create_valid:
-                self.write_fixture(directory / "valid.jsonl", valid or [valid_case()])
+                self.write_fixture(directory / "valid.jsonl", valid_cases)
             if create_invalid:
                 self.write_fixture(
-                    directory / "invalid.jsonl", invalid or [invalid_case()]
+                    directory / "invalid.jsonl", invalid_cases
                 )
             checker.FIXTURE_DIRECTORY = directory
             checker.main()
@@ -165,6 +184,43 @@ class FixtureShapeTest(unittest.TestCase):
         case = valid_case()
         del case["context"]
         with self.assertRaisesRegex(AssertionError, "missing.*context"):
+            self.run_checker(valid=[case])
+
+    def test_rejects_missing_portable_wire_vectors(self) -> None:
+        case = valid_case()
+        with self.assertRaisesRegex(AssertionError, "missing.*expectedWire"):
+            self.run_checker(valid=[case], populate_wire=False)
+
+    def test_rejects_corrupted_binary_wire_vector(self) -> None:
+        checker = load_checker()
+        case = valid_case()
+        case["expectedWire"] = checker.build_expected_wire(
+            case["rule"], case["context"]
+        )
+        case["expectedWire"]["rule"]["binaryHex"] += "00"
+        with self.assertRaisesRegex(AssertionError, "rule binary Protobuf mismatch"):
+            self.run_checker(valid=[case])
+
+    def test_rejects_corrupted_canonical_protojson_vector(self) -> None:
+        checker = load_checker()
+        case = valid_case()
+        case["expectedWire"] = checker.build_expected_wire(
+            case["rule"], case["context"]
+        )
+        case["expectedWire"]["context"]["canonicalProtoJson"] = (
+            '{"registryVersion":"stale"}'
+        )
+        with self.assertRaisesRegex(AssertionError, "context canonical ProtoJSON mismatch"):
+            self.run_checker(valid=[case])
+
+    def test_rejects_non_hex_binary_wire_vector(self) -> None:
+        checker = load_checker()
+        case = valid_case()
+        case["expectedWire"] = checker.build_expected_wire(
+            case["rule"], case["context"]
+        )
+        case["expectedWire"]["context"]["binaryHex"] = "not-hex"
+        with self.assertRaisesRegex(AssertionError, "context binaryHex"):
             self.run_checker(valid=[case])
 
     def test_rejects_cross_file_duplicate_case_id(self) -> None:

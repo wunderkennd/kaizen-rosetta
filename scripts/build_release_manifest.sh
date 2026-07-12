@@ -18,6 +18,7 @@ if [[ "${BSR_MODULE_COMMIT}" == "00000000000000000000000000000000" ]]; then
 fi
 
 descriptor_digest_file="${root}/dist/rosetta-descriptor.sha256"
+local_descriptor_file="${root}/dist/rosetta-descriptor.binpb"
 descriptor_sha256=""
 if [[ -f "${descriptor_digest_file}" ]]; then
   IFS= read -r descriptor_sha256 < "${descriptor_digest_file}" || true
@@ -35,6 +36,39 @@ if [[ "${descriptor_sha256}" == \
   printf '%s\n' 'descriptor digest must not be all zeros' >&2
   exit 1
 fi
+if [[ ! -s "${local_descriptor_file}" ]]; then
+  printf '%s\n' 'local descriptor is required' >&2
+  exit 1
+fi
+computed_descriptor_sha256="$(
+  shasum -a 256 "${local_descriptor_file}" | awk '{print $1}'
+)"
+if [[ "${computed_descriptor_sha256}" != "${descriptor_sha256}" ]]; then
+  printf '%s\n' 'descriptor digest does not match local descriptor' >&2
+  exit 1
+fi
+
+temporary_bsr_descriptor=""
+bsr_descriptor_file="${BSR_DESCRIPTOR_FILE:-}"
+if [[ -z "${bsr_descriptor_file}" ]]; then
+  temporary_bsr_descriptor="$(mktemp "${root}/dist/bsr-descriptor.binpb.tmp.XXXXXX")"
+  trap 'rm -f -- "${temporary_bsr_descriptor}"' EXIT
+  buf build \
+    "buf.build/kaizen/rosetta:${BSR_MODULE_COMMIT}" \
+    --as-file-descriptor-set \
+    -o "${temporary_bsr_descriptor}"
+  bsr_descriptor_file="${temporary_bsr_descriptor}"
+fi
+if [[ ! -s "${bsr_descriptor_file}" ]]; then
+  printf '%s\n' 'BSR descriptor is required' >&2
+  exit 1
+fi
+if ! cmp -s -- "${local_descriptor_file}" "${bsr_descriptor_file}"; then
+  printf '%s\n' 'BSR descriptor does not match local descriptor' >&2
+  exit 1
+fi
+rm -f -- "${temporary_bsr_descriptor}"
+trap - EXIT
 
 git_commit="$(git -C "${root}" rev-parse --verify 'HEAD^{commit}' 2>/dev/null || true)"
 if [[ -z "${git_commit}" ]]; then
@@ -386,12 +420,34 @@ for verification in verification_entries:
         raise SystemExit(f"unexpected generated SDK verification for {generator!r}")
     if generator in verification_by_generator:
         raise SystemExit(f"duplicate generated SDK verification for {generator}")
+    sdk = sdk_by_generator[generator]
+    if verification.get("moduleCommit") != sdk["moduleCommit"]:
+        raise SystemExit(
+            f"generated SDK verification module commit mismatch for {generator}"
+        )
+    if verification.get("ecosystem") != sdk["ecosystem"]:
+        raise SystemExit(
+            f"generated SDK verification ecosystem mismatch for {generator}"
+        )
+    if verification.get("pluginVersion") != sdk["pluginVersion"]:
+        raise SystemExit(
+            f"generated SDK verification plugin version mismatch for {generator}"
+        )
+    if verification.get("pluginRevision") != sdk["pluginRevision"]:
+        raise SystemExit(
+            f"generated SDK verification plugin revision mismatch for {generator}"
+        )
     status = verification.get("status")
     usable = verification.get("usable")
     if not isinstance(usable, bool):
         raise SystemExit(f"generated SDK usable flag missing for {generator}")
-    publication_status = sdk_by_generator[generator]["publicationStatus"]
+    publication_status = sdk["publicationStatus"]
     if publication_status == "unavailable":
+        if "coordinate" in verification or "version" in verification:
+            raise SystemExit(
+                "unavailable generated SDK verification must not claim "
+                f"coordinate/version for {generator}"
+            )
         if status != "not_applicable" or usable:
             raise SystemExit(
                 f"unavailable generated SDK verification mismatch for {generator}"
@@ -400,14 +456,45 @@ for verification in verification_entries:
             raise SystemExit(
                 f"unavailable generated SDK verification reason missing for {generator}"
             )
-    elif status == "passed":
+        expected_fields = {
+            "ecosystem",
+            "generator",
+            "moduleCommit",
+            "pluginRevision",
+            "pluginVersion",
+            "reason",
+            "status",
+            "usable",
+        }
+    else:
+        if verification.get("coordinate") != sdk["coordinate"]:
+            raise SystemExit(
+                f"generated SDK verification coordinate mismatch for {generator}"
+            )
+        if verification.get("version") != sdk["version"]:
+            raise SystemExit(
+                f"generated SDK verification version mismatch for {generator}"
+            )
+    if publication_status != "unavailable" and status == "passed":
         if not usable:
             raise SystemExit(f"passed generated SDK must be usable for {generator}")
         if not isinstance(verification.get("evidence"), str) or not verification["evidence"]:
             raise SystemExit(f"generated SDK verification evidence missing for {generator}")
         if "reason" in verification:
             raise SystemExit(f"passed generated SDK must not include a reason for {generator}")
-    elif status in {"failed", "not_run"}:
+        expected_fields = {
+            "coordinate",
+            "ecosystem",
+            "evidence",
+            "generator",
+            "moduleCommit",
+            "pluginRevision",
+            "pluginVersion",
+            "status",
+            "usable",
+            "version",
+        }
+    elif publication_status != "unavailable" and status in {"failed", "not_run"}:
         if usable:
             raise SystemExit(f"unverified generated SDK cannot be usable for {generator}")
         if not isinstance(verification.get("reason"), str) or not verification["reason"]:
@@ -416,8 +503,24 @@ for verification in verification_entries:
             raise SystemExit(
                 f"unusable generated SDK must not include passing evidence for {generator}"
             )
-    else:
+        expected_fields = {
+            "coordinate",
+            "ecosystem",
+            "generator",
+            "moduleCommit",
+            "pluginRevision",
+            "pluginVersion",
+            "reason",
+            "status",
+            "usable",
+            "version",
+        }
+    elif publication_status != "unavailable":
         raise SystemExit(f"invalid generated SDK verification status for {generator}")
+    if set(verification) != expected_fields:
+        raise SystemExit(
+            f"generated SDK verification fields mismatch for {generator}"
+        )
     verification_by_generator[generator] = verification
 
 missing_verifications = sorted(set(pins).difference(verification_by_generator))

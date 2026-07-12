@@ -67,3 +67,4 @@ check: tooling-sync
     "{{tooling-venv}}/bin/python" -m unittest scripts/test_fix_connectrpc_python_imports.py
     "{{tooling-venv}}/bin/python" -m unittest scripts/test_compile_generated_sdks.py
     "{{tooling-venv}}/bin/python" -m unittest scripts/test_build_release_manifest.py
+    "{{tooling-venv}}/bin/python" -m unittest scripts/test_repository_governance.py

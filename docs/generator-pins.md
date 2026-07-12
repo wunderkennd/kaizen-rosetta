@@ -56,6 +56,22 @@ broken SDKs retain their real coordinate and version with `usable: false` and a
 failure reason. Missing, mismatched, duplicated, unverified, or
 commit-inconsistent metadata fails the release.
 
+Verification evidence is self-binding rather than an unstructured assertion.
+Every record must exactly repeat the resolved generator, immutable module
+commit, ecosystem, plugin version, and plugin revision. Published records also
+repeat the exact coordinate and SDK version exercised by the consumer. The
+builder rejects stale values in any of those fields. Unavailable records omit
+coordinate/version, are `not_applicable` and unusable, and carry a reason. The
+complete published input shape is in
+`tools/release/sdk-verification.example.json`; release automation replaces all
+sample values and supplies one record per active generator.
+
+The release gate also builds `buf.build/kaizen/rosetta:<moduleCommit>` as a file
+descriptor set and requires byte identity with the locally generated
+descriptor, whose recorded SHA-256 digest is independently recomputed. SDK
+resolution and successful exact-coordinate checks therefore cannot attach a
+manifest to an unrelated, otherwise valid BSR commit.
+
 ConnectRPC Python v0.11.0 is published but is not directly usable for Rosetta's
 nested service packages: its BSR wheel retains the known beyond-top-level
 relative import. Its release-manifest verification must remain `failed` and

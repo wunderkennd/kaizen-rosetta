@@ -7,10 +7,13 @@ import hashlib
 import json
 import math
 import re
+import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any
 
 import rfc8785
+from google.protobuf import descriptor_pb2, descriptor_pool, json_format, message_factory
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,6 +27,7 @@ REQUIRED = {
     "context",
     "expectedDecision",
     "expectedReasonCodes",
+    "expectedWire",
 }
 DECISIONS = {
     "AUDIENCE_EVALUATION_DECISION_UNSPECIFIED",
@@ -67,6 +71,11 @@ VALID_PROVENANCE = {
     "AUDIENCE_ATTRIBUTE_PROVENANCE_DEFAULT",
     "AUDIENCE_ATTRIBUTE_PROVENANCE_OVERLAY",
 }
+WIRE_MESSAGE_NAMES = {
+    "rule": "kaizen.audience.v1.AudienceRule",
+    "context": "kaizen.audience.v1.AudienceContext",
+}
+_WIRE_MESSAGE_TYPES: dict[str, type] | None = None
 
 
 class JsonInteger:
@@ -81,6 +90,64 @@ class JsonFloat:
 
 class NormalizationImpossible(Exception):
     """The source expression has no node or a NOT node has no child."""
+
+
+def wire_message_types() -> dict[str, type]:
+    """Load portable audience message types from the repository descriptor."""
+
+    global _WIRE_MESSAGE_TYPES
+    if _WIRE_MESSAGE_TYPES is not None:
+        return _WIRE_MESSAGE_TYPES
+    with tempfile.NamedTemporaryFile(suffix=".binpb") as descriptor_file:
+        subprocess.run(
+            [
+                "buf",
+                "build",
+                "--as-file-descriptor-set",
+                "-o",
+                descriptor_file.name,
+            ],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        descriptor_set = descriptor_pb2.FileDescriptorSet.FromString(
+            Path(descriptor_file.name).read_bytes()
+        )
+    pool = descriptor_pool.DescriptorPool()
+    pending = list(descriptor_set.file)
+    while pending:
+        remaining = []
+        added = 0
+        for descriptor in pending:
+            try:
+                pool.Add(descriptor)
+                added += 1
+            except TypeError:
+                remaining.append(descriptor)
+        assert added, "unable to resolve descriptor dependencies"
+        pending = remaining
+    _WIRE_MESSAGE_TYPES = {
+        key: message_factory.GetMessageClass(pool.FindMessageTypeByName(name))
+        for key, name in WIRE_MESSAGE_NAMES.items()
+    }
+    return _WIRE_MESSAGE_TYPES
+
+
+def build_expected_wire(rule: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    """Build exact binary input and canonical ProtoJSON expectations."""
+
+    vectors: dict[str, Any] = {}
+    for key, source in (("rule", rule), ("context", context)):
+        message = wire_message_types()[key]()
+        json_format.ParseDict(canonical_json_value(source), message)
+        proto_json = json_format.MessageToDict(message)
+        vectors[key] = {
+            "binaryHex": message.SerializeToString(deterministic=True).hex(),
+            "canonicalProtoJson": canonical_json(proto_json),
+        }
+    return vectors
 
 
 def reject_non_finite_json_number(value: str) -> None:
@@ -453,6 +520,33 @@ def validate(
         else:
             assert "equivalenceGroup" not in case, (
                 f"{location}: equivalenceGroup requires normalized expression"
+            )
+
+        expected_wire = case["expectedWire"]
+        assert isinstance(expected_wire, dict) and set(expected_wire) == {
+            "rule",
+            "context",
+        }, f"{location}: expectedWire must contain rule and context vectors"
+        derived_wire = build_expected_wire(case["rule"], case["context"])
+        for message_name in ("rule", "context"):
+            vector = expected_wire[message_name]
+            assert isinstance(vector, dict) and set(vector) == {
+                "binaryHex",
+                "canonicalProtoJson",
+            }, f"{location}: invalid {message_name} wire vector fields"
+            binary_hex = vector["binaryHex"]
+            assert isinstance(binary_hex, str) and re.fullmatch(
+                r"(?:[0-9a-f]{2})*", binary_hex
+            ), f"{location}: invalid {message_name} binaryHex"
+            assert binary_hex == derived_wire[message_name]["binaryHex"], (
+                f"{location}: {message_name} binary Protobuf mismatch"
+            )
+            proto_json = vector["canonicalProtoJson"]
+            assert isinstance(proto_json, str), (
+                f"{location}: {message_name} canonicalProtoJson must be a string"
+            )
+            assert proto_json == derived_wire[message_name]["canonicalProtoJson"], (
+                f"{location}: {message_name} canonical ProtoJSON mismatch"
             )
 
 

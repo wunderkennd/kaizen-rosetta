@@ -125,8 +125,25 @@ Normalization is recursive:
    values use ECMAScript-compatible rendering, and Unicode property names are
    sorted by UTF-16 code units. NaN and infinities are rejected.
 
-The shared conformance corpus defines the normalized JSON representation and
-typed ordering examples. Implementations must agree with its fingerprints;
+The shared conformance corpus defines the normalized JSON representation,
+typed ordering examples, and portable wire vectors. Every one of the 48 cases
+contains `expectedWire.rule` and `expectedWire.context`; each record has a
+lowercase `binaryHex` Protobuf payload and `canonicalProtoJson`, which is the
+RFC 8785 serialization of the standard ProtoJSON object. These are
+language-neutral `AudienceRule` and `AudienceContext` vectors, including cases
+that are schema-valid Protobuf messages but invalid under audience policy.
+
+A downstream evaluator must perform both directions for each message:
+
+1. Hex-decode `binaryHex`, parse the named audience message, emit standard
+   ProtoJSON, apply RFC 8785, and compare with `canonicalProtoJson`.
+2. Parse `canonicalProtoJson` as ProtoJSON and compare the resulting message
+   semantically with the message decoded from `binaryHex`.
+
+The stored bytes use deterministic serialization solely to make the corpus
+reviewable. Protobuf field order and map-entry order are not canonical across
+all runtimes, so consumers compare decoded messages, not reserialized byte
+identity. Implementations must also agree with the corpus fingerprints;
 protobuf wire serialization, map iteration order, and source expression order
 must not affect the digest. Semantically equivalent permutations of `ALL`,
 `ANY`, `IN`, and `NOT_IN` therefore have the same fingerprint.
