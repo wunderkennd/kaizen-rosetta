@@ -1,0 +1,121 @@
+version: "2026-07-12"
+definitions {
+  key: "country_code"
+  value_type: AUDIENCE_VALUE_TYPE_STRING
+  allowed_operators: AUDIENCE_OPERATOR_EQUALS
+  allowed_operators: AUDIENCE_OPERATOR_NOT_EQUALS
+  allowed_operators: AUDIENCE_OPERATOR_IN
+  allowed_operators: AUDIENCE_OPERATOR_NOT_IN
+  allowed_operators: AUDIENCE_OPERATOR_EXISTS
+  allowed_operators: AUDIENCE_OPERATOR_NOT_EXISTS
+  normalization: AUDIENCE_NORMALIZATION_UPPERCASE
+  sensitivity: AUDIENCE_SENSITIVITY_NON_SENSITIVE
+  owner: "identity"
+  description: "Uppercase ISO 3166-1 alpha-2 country code."
+}
+definitions {
+  key: "market_region"
+  value_type: AUDIENCE_VALUE_TYPE_STRING
+  allowed_operators: AUDIENCE_OPERATOR_EQUALS
+  allowed_operators: AUDIENCE_OPERATOR_NOT_EQUALS
+  allowed_operators: AUDIENCE_OPERATOR_IN
+  allowed_operators: AUDIENCE_OPERATOR_NOT_IN
+  allowed_operators: AUDIENCE_OPERATOR_EXISTS
+  allowed_operators: AUDIENCE_OPERATOR_NOT_EXISTS
+  normalization: AUDIENCE_NORMALIZATION_LOWERCASE
+  sensitivity: AUDIENCE_SENSITIVITY_NON_SENSITIVE
+  owner: "merchandising"
+  description: "Controlled lowercase commercial and availability region identifier."
+}
+definitions {
+  key: "subscription_tier"
+  value_type: AUDIENCE_VALUE_TYPE_STRING
+  allowed_operators: AUDIENCE_OPERATOR_EQUALS
+  allowed_operators: AUDIENCE_OPERATOR_NOT_EQUALS
+  allowed_operators: AUDIENCE_OPERATOR_IN
+  allowed_operators: AUDIENCE_OPERATOR_NOT_IN
+  allowed_operators: AUDIENCE_OPERATOR_EXISTS
+  allowed_operators: AUDIENCE_OPERATOR_NOT_EXISTS
+  normalization: AUDIENCE_NORMALIZATION_LOWERCASE
+  sensitivity: AUDIENCE_SENSITIVITY_SENSITIVE
+  owner: "subscriptions"
+  description: "Controlled lowercase subscription entitlement tier identifier."
+}
+definitions {
+  key: "account_age_days"
+  value_type: AUDIENCE_VALUE_TYPE_INT64
+  allowed_operators: AUDIENCE_OPERATOR_EQUALS
+  allowed_operators: AUDIENCE_OPERATOR_NOT_EQUALS
+  allowed_operators: AUDIENCE_OPERATOR_IN
+  allowed_operators: AUDIENCE_OPERATOR_NOT_IN
+  allowed_operators: AUDIENCE_OPERATOR_GREATER_THAN
+  allowed_operators: AUDIENCE_OPERATOR_GREATER_THAN_OR_EQUALS
+  allowed_operators: AUDIENCE_OPERATOR_LESS_THAN
+  allowed_operators: AUDIENCE_OPERATOR_LESS_THAN_OR_EQUALS
+  allowed_operators: AUDIENCE_OPERATOR_EXISTS
+  allowed_operators: AUDIENCE_OPERATOR_NOT_EXISTS
+  normalization: AUDIENCE_NORMALIZATION_NONE
+  sensitivity: AUDIENCE_SENSITIVITY_SENSITIVE
+  owner: "identity"
+  description: "Non-negative age of the account in whole days."
+}
+definitions {
+  key: "device_class"
+  value_type: AUDIENCE_VALUE_TYPE_STRING
+  allowed_operators: AUDIENCE_OPERATOR_EQUALS
+  allowed_operators: AUDIENCE_OPERATOR_NOT_EQUALS
+  allowed_operators: AUDIENCE_OPERATOR_IN
+  allowed_operators: AUDIENCE_OPERATOR_NOT_IN
+  allowed_operators: AUDIENCE_OPERATOR_CONTAINS
+  allowed_operators: AUDIENCE_OPERATOR_REGEX
+  allowed_operators: AUDIENCE_OPERATOR_EXISTS
+  allowed_operators: AUDIENCE_OPERATOR_NOT_EXISTS
+  normalization: AUDIENCE_NORMALIZATION_LOWERCASE
+  sensitivity: AUDIENCE_SENSITIVITY_NON_SENSITIVE
+  owner: "client-platform"
+  description: "Controlled lowercase device category, such as phone, tablet, TV, or web."
+}
+definitions {
+  key: "locale"
+  value_type: AUDIENCE_VALUE_TYPE_STRING
+  allowed_operators: AUDIENCE_OPERATOR_EQUALS
+  allowed_operators: AUDIENCE_OPERATOR_NOT_EQUALS
+  allowed_operators: AUDIENCE_OPERATOR_IN
+  allowed_operators: AUDIENCE_OPERATOR_NOT_IN
+  allowed_operators: AUDIENCE_OPERATOR_EXISTS
+  allowed_operators: AUDIENCE_OPERATOR_NOT_EXISTS
+  normalization: AUDIENCE_NORMALIZATION_BCP47
+  sensitivity: AUDIENCE_SENSITIVITY_NON_SENSITIVE
+  owner: "localization"
+  description: "Canonical BCP 47 locale tag."
+}
+definitions {
+  key: "maturity_context"
+  value_type: AUDIENCE_VALUE_TYPE_STRING
+  allowed_operators: AUDIENCE_OPERATOR_EQUALS
+  allowed_operators: AUDIENCE_OPERATOR_NOT_EQUALS
+  allowed_operators: AUDIENCE_OPERATOR_IN
+  allowed_operators: AUDIENCE_OPERATOR_NOT_IN
+  allowed_operators: AUDIENCE_OPERATOR_EXISTS
+  allowed_operators: AUDIENCE_OPERATOR_NOT_EXISTS
+  normalization: AUDIENCE_NORMALIZATION_LOWERCASE
+  sensitivity: AUDIENCE_SENSITIVITY_SENSITIVE
+  owner: "trust-safety"
+  description: "Controlled maturity-policy context; never a date of birth or raw age."
+}
+definitions {
+  key: "platform"
+  value_type: AUDIENCE_VALUE_TYPE_STRING
+  allowed_operators: AUDIENCE_OPERATOR_EQUALS
+  allowed_operators: AUDIENCE_OPERATOR_NOT_EQUALS
+  allowed_operators: AUDIENCE_OPERATOR_IN
+  allowed_operators: AUDIENCE_OPERATOR_NOT_IN
+  allowed_operators: AUDIENCE_OPERATOR_CONTAINS
+  allowed_operators: AUDIENCE_OPERATOR_REGEX
+  allowed_operators: AUDIENCE_OPERATOR_EXISTS
+  allowed_operators: AUDIENCE_OPERATOR_NOT_EXISTS
+  normalization: AUDIENCE_NORMALIZATION_LOWERCASE
+  sensitivity: AUDIENCE_SENSITIVITY_NON_SENSITIVE
+  owner: "client-platform"
+  description: "Controlled lowercase client and platform identifier."
+}
