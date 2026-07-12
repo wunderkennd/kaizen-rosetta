@@ -21,8 +21,12 @@ service MetricComputationService {
   rpc GetQueryLog(GetQueryLogRequest) returns (GetQueryLogResponse);
 }
 
-message ComputeMetricsRequest { string experiment_id = 1; }
-message ComputeGuardrailMetricsRequest { string experiment_id = 1; }
+message ComputeMetricsRequest {
+  string experiment_id = 1;
+}
+message ComputeGuardrailMetricsRequest {
+  string experiment_id = 1;
+}
 message ComputeMetricsResponse {
   string experiment_id = 1;
   int32 metrics_computed = 2;

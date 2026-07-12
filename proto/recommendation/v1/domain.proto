@@ -65,8 +65,8 @@ message ProfileFeatures {
 
 message WatchedItem {
   string item_id = 1;
-  string watched_on = 2;           // ISO 8601 date
-  double percent_watched = 3;       // 0.0 - 1.0
+  string watched_on = 2; // ISO 8601 date
+  double percent_watched = 3; // 0.0 - 1.0
   int64 seconds_watched = 4;
   bool is_series = 5;
   int32 most_recent_season = 6;
@@ -75,14 +75,14 @@ message WatchedItem {
 
 message MyListItem {
   string item_id = 1;
-  string added_on = 2;             // ISO 8601 date
+  string added_on = 2; // ISO 8601 date
 }
 
 message ContinueWatchingItem {
   string item_id = 1;
   double percent_watched = 2;
   int64 seconds_watched = 3;
-  string last_watched_on = 4;      // ISO 8601 date
+  string last_watched_on = 4; // ISO 8601 date
   int32 season_number = 5;
   int32 episode_number = 6;
 }
@@ -115,7 +115,7 @@ message Collection {
   string collection_id = 1;
   string collection_name = 2;
   RailRecommenderType recommender_type = 3;
-  string feature_id = 4;            // Used to look up ML model features
+  string feature_id = 4; // Used to look up ML model features
   repeated string pre_populated_items = 5;
   int32 max_items = 6;
 }
@@ -139,7 +139,7 @@ message RatingPolicy {
 
 message PinConfig {
   string collection_id = 1;
-  map<int32, string> pinned_positions = 2;  // position → itemId
+  map<int32, string> pinned_positions = 2; // position → itemId
   bool bounded = 3;
 }
 
@@ -168,10 +168,10 @@ message RelevanceScores {
 message Candidate {
   string item_id = 1;
   double score = 2;
-  string source = 3;               // Which recommender produced this
+  string source = 3; // Which recommender produced this
   bool is_pinned = 4;
   int32 pinned_position = 5;
-  CatalogItem catalog_item = 6;    // Enriched catalog metadata
+  CatalogItem catalog_item = 6; // Enriched catalog metadata
 }
 
 // CandidateList is a list of candidates for a single collection/rail.
@@ -188,7 +188,7 @@ message CandidateList {
 message Page {
   string page_id = 1;
   repeated PageRow rows = 2;
-  string cohort_key = 3;            // Cache key for cohort-based caching
+  string cohort_key = 3; // Cache key for cohort-based caching
 }
 
 // PageRow represents a single row/rail on the recommendation page.

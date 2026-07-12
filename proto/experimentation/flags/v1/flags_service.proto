@@ -47,11 +47,23 @@ message FlagVariant {
   double traffic_fraction = 3;
 }
 
-message CreateFlagRequest { Flag flag = 1; }
-message GetFlagRequest { string flag_id = 1; }
-message UpdateFlagRequest { Flag flag = 1; }
-message ListFlagsRequest { int32 page_size = 1; string page_token = 2; }
-message ListFlagsResponse { repeated Flag flags = 1; string next_page_token = 2; }
+message CreateFlagRequest {
+  Flag flag = 1;
+}
+message GetFlagRequest {
+  string flag_id = 1;
+}
+message UpdateFlagRequest {
+  Flag flag = 1;
+}
+message ListFlagsRequest {
+  int32 page_size = 1;
+  string page_token = 2;
+}
+message ListFlagsResponse {
+  repeated Flag flags = 1;
+  string next_page_token = 2;
+}
 
 message EvaluateFlagRequest {
   string flag_id = 1;
@@ -68,7 +80,9 @@ message EvaluateFlagsRequest {
   string user_id = 1;
   map<string, string> attributes = 2;
 }
-message EvaluateFlagsResponse { repeated EvaluateFlagResponse evaluations = 1; }
+message EvaluateFlagsResponse {
+  repeated EvaluateFlagResponse evaluations = 1;
+}
 
 message PromoteToExperimentRequest {
   string flag_id = 1;

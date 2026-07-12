@@ -2,9 +2,9 @@ syntax = "proto3";
 
 package recommendation.v1;
 
-option go_package = "github.com/wunderkennd/personalization/gen/go/recommendation/v1";
-
 import "recommendation/v1/domain.proto";
+
+option go_package = "github.com/wunderkennd/personalization/gen/go/recommendation/v1";
 
 // ProfileFeatureService provides user profile features from DynamoDB.
 service ProfileFeatureService {
