@@ -28,12 +28,14 @@ plugins:
     opt: target=ts
 
   # Python (Google Protobuf messages and ConnectRPC services)
-  - remote: buf.build/protocolbuffers/python:v35.1
+  - remote: buf.build/protocolbuffers/python:v33.5
     revision: 1
     out: gen/python
-  - remote: buf.build/protocolbuffers/pyi:v35.1
+    include_imports: true
+  - remote: buf.build/protocolbuffers/pyi:v33.5
     revision: 1
     out: gen/python
+    include_imports: true
   - remote: buf.build/connectrpc/py:v0.11.0
     revision: 1
     out: gen/python

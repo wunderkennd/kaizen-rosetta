@@ -30,8 +30,19 @@ jobs:
         with:
           just-version: 1.46.0
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
       - name: Run deterministic checks
         run: just check
+
+      - name: Generate contracts
+        run: just generate
+
+      - name: Run Python contract tests
+        run: just python-contracts
 
       - name: Build descriptor and digest
         run: just descriptor
