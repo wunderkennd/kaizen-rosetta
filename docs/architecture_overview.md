@@ -54,8 +54,30 @@ graph TD
 
 ## Core Product Value Loops
 
+### Shared audience contract and runtime ownership
+
+`kaizen.audience.v1` is a neutral Rosetta contract. It defines portable typed
+values, expression structure, operators, and diagnostics without assigning
+ownership to Merchandising, Workbench, or Experimentation and without
+implementing an evaluator.
+
+Workbench's own audience evaluator may import the same contract for authoring
+preview, but the schema itself is not an evaluator and preview is non-exposing.
+Preview may use observed or explicitly synthetic inputs and return diagnostics,
+but it neither emits nor records assignments, exposures, metrics, or rewards.
+Experimentation owns production assignment behavior, including runtime
+evaluation policy, deterministic bucketing, variant selection, exposure
+recording, metrics, rewards, and assignment telemetry.
+
+The checked-in `kaizen.protobuf.metadata.program.v4` files are a temporary,
+reconstructed subset of an external program contract needed for current
+integration compilation. They are not the final production campaign model or
+the source of truth for campaign authoring. Their upstream provenance and
+replacement path must be established before expanding them as a Rosetta-owned
+API.
+
 ### 1. Curated Merchandising
-Curators use the **ATOM Curator Suite** to configure hero banners, promotional carousels, and editorial fallbacks. These campaigns are structured and validated against `kaizen-protobuf-schema` definitions. They are parsed by `content-promotion-go` in `merchandising-apis` and synced down to the hot-path engine (`kaizen-accelerator`) so that promotional material is dynamically woven into user pages alongside personalized rows.
+Curators use the **ATOM Curator Suite** to configure hero banners, promotional carousels, and editorial fallbacks. Current integration builds use the temporary reconstructed `program.v4` subset to describe the external campaign boundary; that subset is not the authoring source of truth. Campaigns are parsed by `content-promotion-go` in `merchandising-apis` and synced down to the hot-path engine (`kaizen-accelerator`) so that promotional material is dynamically woven into user pages alongside personalized rows.
 
 ### 2. Real-time Personalization & Slate Bandits
 When a user requests a personalized page:

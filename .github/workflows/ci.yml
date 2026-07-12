@@ -35,7 +35,11 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Run deterministic checks
+      - name: Run deterministic checks and release-manifest builder fixtures
+        # This released commit is test input only. No candidate manifest is
+        # created until a release supplies the BSR commit returned by buf push.
+        env:
+          RELEASE_MANIFEST_TEST_BSR_COMMIT: 3d978f388d4242f3b3c8e663465b85fd
         run: just check
 
       - name: Generate contracts

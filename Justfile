@@ -25,6 +25,10 @@ python-contracts venv="/tmp/rosetta-test-venv":
 descriptor:
     ./scripts/descriptor_digest.sh
 
+release-manifest: descriptor
+    ./scripts/build_release_manifest.sh
+    python3 -m json.tool dist/release-manifest.json > /dev/null
+
 fixtures:
     python3 scripts/check_fixture_shape.py
     python3 -m unittest scripts/test_check_fixture_shape.py
@@ -36,3 +40,4 @@ check:
     python3 scripts/check_fixture_shape.py
     python3 -m unittest scripts/test_check_fixture_shape.py
     python3 -m unittest scripts/test_fix_connectrpc_python_imports.py
+    python3 -m unittest scripts/test_build_release_manifest.py

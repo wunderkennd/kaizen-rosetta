@@ -12,6 +12,7 @@ The experimentation platform is a highly modular, multi-service system written i
 - **M1 Assignment Service (Rust)**:
   - High-performance variant allocation using robust hash-bucketing.
   - Handles real-time slate interleaving and routing.
+  - Owns production audience evaluation policy, assignment state, and exposure recording; authoring previews do not perform these operations.
   - SLA: p99 latency < 5ms under 50K rps.
 - **M2 Event Pipeline (Rust/Go)**:
   - Validates client telemetric logs against strict protobuf schemas.
@@ -75,6 +76,13 @@ A modern curation console that allows editorial teams to schedule campaigns, ver
 - **Allowlist & Fallback Panels**:
   - Configures safe fallback items and critical row overrides for personalization failures.
 
+Workbench-style authoring tools may preview neutral `kaizen.audience.v1`
+expressions against observed or explicitly synthetic values through their own
+audience evaluator. Preview is a non-exposing diagnostic operation: it neither
+emits nor records assignments, exposures, metrics, or rewards and does not
+mutate Experimentation state. The audience package supplies schema contracts;
+it is not a callable evaluator.
+
 ---
 
 ## 5. kaizen-rosetta (Schemas)
@@ -83,4 +91,11 @@ The central schema registry that binds all of the above repositories together.
 
 ### Core Capabilities:
 - Aggregates Protocol Buffer definitions for A/B testing (`proto/experimentation`), personalization (`proto/recommendation`), and catalog metadata (`proto/kaizen/protobuf/metadata`).
-- Utilizes `buf` to enforce backward compatibility (`buf breaking`) and style consistency (`buf lint`), generating clean client SDKs for Go and TypeScript.
+- Owns the neutral `kaizen.audience.v1` contract for typed values, expressions, operators, and diagnostics. Rosetta does not own production evaluation or assignment behavior; Experimentation does.
+- Utilizes `buf` to enforce backward compatibility (`buf breaking`) and style consistency (`buf lint`), generating pinned client SDKs for Go, TypeScript, and Python.
+- Publishes a descriptor and deterministic release manifest for consumers. Rust consumers pin the released BSR module or descriptor instead of copying protobuf sources.
+
+`proto/kaizen/protobuf/metadata/program/v4` is currently a temporary,
+reconstructed subset of an external program contract. It exists to support the
+known integration surface and must not be treated as the final production
+campaign source of truth or expanded without confirmed upstream provenance.

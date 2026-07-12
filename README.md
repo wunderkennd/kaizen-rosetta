@@ -1,6 +1,9 @@
 # Kaizen Ecosystem Protobuf Schemas (kaizen-rosetta)
 
-`kaizen-rosetta` is the central schema registry and single source of truth for all Protocol Buffer schemas and architectural documentation across the **Kaizen & Merchandising Ecosystem**. 
+`kaizen-rosetta` is the central registry for shared Protocol Buffer contracts
+and their architectural documentation across the **Kaizen & Merchandising
+Ecosystem**. Domain systems remain authoritative for contracts explicitly
+documented here as external compatibility subsets.
 
 By utilizing standardized message contracts, `kaizen-rosetta` ensures strong interface compatibility and compile-time safety between curation platforms, serving gateways, real-time bandit services, and closed-loop data processing pipelines.
 
@@ -39,8 +42,10 @@ kaizen-rosetta/
     │   ├── engine_service.proto   # Candidate re-ranking engine gRPC interface
     │   └── service.proto          # PageRecommendationService client/server interfaces
     │
-    └── kaizen/protobuf/metadata/  # Merchandising, Banners & Editorial Curation schemas
-        └── program/v4/            # Campaign promotion models, editorial schedules & allowlists
+    └── kaizen/
+        ├── audience/v1/           # Neutral typed audience contracts and diagnostics
+        └── protobuf/metadata/     # Reconstructed external metadata contracts
+            └── program/v4/        # Temporary external campaign subset; not the source of truth
 ```
 
 ---
@@ -74,11 +79,13 @@ buf build
 ```
 
 ### 4. Code Generation (SDKs)
-rossetta handles centralized, multi-language client/server SDK code generation:
+Rosetta handles centralized Go, TypeScript, and Python client/server SDK code generation:
 ```bash
-buf generate
+just generate
 ```
-This parses the rules inside `buf.gen.yaml` and outputs generated files locally.
+This parses the pinned rules inside `buf.gen.yaml`, outputs generated files
+locally, and applies the guarded ConnectRPC Python import repair documented in
+[`docs/generator-pins.md`](docs/generator-pins.md).
 
 ---
 
@@ -94,9 +101,40 @@ This parses the rules inside `buf.gen.yaml` and outputs generated files locally.
    - Package Target: ConnectRPC/ES for Web and Node runtime clients.
    - Generated using `buf.build/bufbuild/es` and `buf.build/connectrpc/es`.
    - Used by: `ATOM Curator Suite` (Vite) and A/B Decision Support Dashboard (Next.js).
-3. **Java SDK**:
-   - Package Namespace: `com.wunderkennd.kaizen.proto.*`
-   - Used by: Legacy Spring and WebFlux recommendation layers.
+3. **Python SDK (`gen/python/`)**:
+   - Package Target: Google Protobuf messages, type stubs, and ConnectRPC services.
+   - Generated using `buf.build/protocolbuffers/python`, `buf.build/protocolbuffers/pyi`, and `buf.build/connectrpc/py`.
+   - Verified by the Python generated-contract smoke tests.
+
+Java is not currently a generated or tested Rosetta SDK target. Add it only
+after pinning a Java generator and adding a Java compilation test.
+
+### Rust consumers
+
+Rust services consume the Rosetta module pinned to an immutable BSR module
+commit, or consume the descriptor artifact identified by a release manifest.
+They use their own pinned Rust generator toolchain; they must not copy Rosetta
+`.proto` files into downstream repositories.
+
+### Release manifests
+
+After `buf push` returns the immutable BSR module commit for the candidate,
+build the descriptor and manifest together:
+
+```bash
+BSR_MODULE_COMMIT=<commit-returned-by-buf-push> just release-manifest
+```
+
+The command writes `dist/release-manifest.json` with the Git commit, descriptor
+digest, Buf CLI version, BSR module commit, and the exact generator names,
+versions, and revisions parsed from `buf.gen.yaml`. The builder refuses an
+empty or Git-shaped BSR commit and never infers a BSR commit from the local Git
+revision. It also refuses staged, unstaged, or untracked release-source changes,
+so the descriptor, generator pins, tests, and release documentation are
+reproducible from the recorded `gitCommit`. Generated `dist/` and `gen/` output
+and `.superpowers/` reports are excluded from that cleanliness gate. The
+released baseline used by local and CI unit tests is only a builder fixture; it
+is not a release of the current checkout.
 
 ---
 
