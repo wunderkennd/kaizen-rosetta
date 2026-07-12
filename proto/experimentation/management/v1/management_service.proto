@@ -9,6 +9,7 @@ import "experimentation/common/v1/metricql_diagnostic.proto";
 import "experimentation/common/v1/surrogate.proto";
 import "experimentation/common/v1/targeting.proto";
 import "google/protobuf/empty.proto";
+import "kaizen/audience/v1/rule.proto";
 
 option go_package = "github.com/org/experimentation/gen/go/management/v1;managementv1";
 
@@ -66,6 +67,11 @@ service ExperimentManagementService {
 
   // Targeting rules.
   rpc CreateTargetingRule(CreateTargetingRuleRequest) returns (experimentation.common.v1.TargetingRule);
+
+  // Audience v1 rules.
+  rpc CreateAudienceRule(CreateAudienceRuleRequest) returns (kaizen.audience.v1.AudienceRule);
+  rpc GetAudienceRule(GetAudienceRuleRequest) returns (kaizen.audience.v1.AudienceRule);
+  rpc ListAudienceRules(ListAudienceRulesRequest) returns (ListAudienceRulesResponse);
 
   // Surrogate model management.
   rpc CreateSurrogateModel(CreateSurrogateModelRequest) returns (experimentation.common.v1.SurrogateModelConfig);
@@ -273,6 +279,23 @@ message GetLayerAllocationsResponse {
 // --- Targeting ---
 message CreateTargetingRuleRequest {
   experimentation.common.v1.TargetingRule rule = 1;
+}
+
+// --- Audience v1 ---
+message CreateAudienceRuleRequest {
+  kaizen.audience.v1.AudienceRule rule = 1;
+}
+message GetAudienceRuleRequest {
+  string rule_id = 1;
+  uint64 revision = 2;
+}
+message ListAudienceRulesRequest {
+  int32 page_size = 1;
+  string page_token = 2;
+}
+message ListAudienceRulesResponse {
+  repeated kaizen.audience.v1.AudienceRule rules = 1;
+  string next_page_token = 2;
 }
 
 // --- Surrogate ---
