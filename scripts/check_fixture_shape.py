@@ -10,6 +10,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+import rfc8785
+
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_DIRECTORY = ROOT / "conformance/audience/v1"
@@ -38,6 +40,7 @@ REASON_CODES = {
     "AUDIENCE_EVALUATION_REASON_CODE_INVALID_REGEX",
     "AUDIENCE_EVALUATION_REASON_CODE_LIMIT_EXCEEDED",
     "AUDIENCE_EVALUATION_REASON_CODE_LEGACY_CONVERSION_FAILURE",
+    "AUDIENCE_EVALUATION_REASON_CODE_INVALID_CONTEXT",
 }
 OPERATORS = {
     "AUDIENCE_OPERATOR_UNSPECIFIED",
@@ -55,10 +58,15 @@ OPERATORS = {
     "AUDIENCE_OPERATOR_NOT_EXISTS",
 }
 INTEGER = re.compile(r"-?(?:0|[1-9][0-9]*)$")
-SIMPLE_DOUBLE = re.compile(r"-?(?:0|[1-9][0-9]*)\.[0-9]+$")
 INT64_STRING = re.compile(r"-?(?:0|[1-9][0-9]*)$")
 INT64_MIN = -(2**63)
 INT64_MAX = 2**63 - 1
+VALID_PROVENANCE = {
+    "AUDIENCE_ATTRIBUTE_PROVENANCE_OBSERVED",
+    "AUDIENCE_ATTRIBUTE_PROVENANCE_SYNTHETIC",
+    "AUDIENCE_ATTRIBUTE_PROVENANCE_DEFAULT",
+    "AUDIENCE_ATTRIBUTE_PROVENANCE_OVERLAY",
+}
 
 
 class JsonInteger:
@@ -91,27 +99,17 @@ def reject_duplicate_object_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]
 def canonical_integer(value: JsonInteger) -> str:
     lexeme = value.lexeme
     assert INTEGER.fullmatch(lexeme), "unsupported JSON integer"
-    assert lexeme != "-0", "unsupported integer negative zero"
     integer = int(lexeme)
     assert abs(integer) <= 2**53 - 1, "unsupported JSON integer"
-    return str(integer)
+    return rfc8785.dumps(integer).decode("utf-8")
 
 
 def canonical_float(value: JsonFloat) -> str:
     lexeme = value.lexeme
-    assert "e" not in lexeme.lower(), "unsupported exponent-form double"
-    assert SIMPLE_DOUBLE.fullmatch(lexeme), "unsupported JSON double"
     number = float(lexeme)
     if not math.isfinite(number):
         raise ValueError(f"non-finite JSON number: {lexeme}")
-    assert not (number == 0.0 and lexeme.startswith("-")), (
-        "unsupported float negative zero"
-    )
-    rendered = repr(number)
-    assert "e" not in rendered.lower(), "unsupported exponent-form double"
-    if rendered.endswith(".0"):
-        rendered = rendered[:-2]
-    return rendered
+    return rfc8785.dumps(number).decode("utf-8")
 
 
 def canonical_int64_string(value: str, location: str) -> str:
@@ -138,51 +136,51 @@ def validate_json_lexemes(value: Any) -> None:
             validate_json_lexemes(item)
 
 
-def canonical_json(value: Any) -> str:
-    """Serialize the deliberately narrow fixture domain as RFC 8785 JSON.
-
-    Fixture objects use ASCII field names, Unicode string values, booleans,
-    I-JSON integers, and finite simple doubles. Exponent-form doubles are
-    intentionally unsupported because the corpus does not need the broader
-    ECMAScript number-serialization surface required by RFC 8785.
-    """
-
+def canonical_json_value(value: Any) -> Any:
     if isinstance(value, JsonInteger):
-        return canonical_integer(value)
+        canonical_integer(value)
+        return int(value.lexeme)
     if isinstance(value, JsonFloat):
-        return canonical_float(value)
+        canonical_float(value)
+        return float(value.lexeme)
     if isinstance(value, str):
-        return json.dumps(value, ensure_ascii=False, allow_nan=False)
-    if value is True:
-        return "true"
-    if value is False:
-        return "false"
+        return value
+    if value is None or isinstance(value, bool):
+        return value
     if isinstance(value, int):
         assert abs(value) <= 2**53 - 1, "unsupported JSON integer"
-        return str(value)
+        return value
     if isinstance(value, float):
         if not math.isfinite(value):
             raise ValueError(f"non-finite JSON number: {value}")
-        assert math.copysign(1.0, value) > 0 or value != 0.0, (
-            "unsupported negative zero"
-        )
-        rendered = repr(value)
-        assert "e" not in rendered.lower(), "unsupported exponent-form double"
-        if rendered.endswith(".0"):
-            rendered = rendered[:-2]
-        return rendered
+        return value
     if isinstance(value, list):
-        return "[" + ",".join(canonical_json(item) for item in value) + "]"
+        return [canonical_json_value(item) for item in value]
     if isinstance(value, dict):
-        keys = list(value)
-        assert all(isinstance(key, str) and key.isascii() for key in keys), (
-            "canonical JSON object keys must be ASCII strings"
+        assert all(isinstance(key, str) for key in value), (
+            "canonical JSON object keys must be strings"
         )
-        return "{" + ",".join(
-            canonical_json(key) + ":" + canonical_json(value[key])
-            for key in sorted(keys)
-        ) + "}"
+        return {key: canonical_json_value(item) for key, item in value.items()}
     raise AssertionError(f"unsupported canonical JSON value: {type(value).__name__}")
+
+
+def canonical_json(value: Any) -> str:
+    """Serialize an I-JSON value with the complete RFC 8785 algorithm."""
+
+    return rfc8785.dumps(canonical_json_value(value)).decode("utf-8")
+
+
+def context_validation_error(context: dict[str, Any]) -> str | None:
+    attributes = context.get("attributes", {})
+    if not isinstance(attributes, dict):
+        return "attributes must be an object"
+    for key, attribute in attributes.items():
+        if not isinstance(attribute, dict):
+            return f"attribute {key!r} must be an object"
+        provenance = attribute.get("provenance")
+        if provenance not in VALID_PROVENANCE:
+            return f"attribute {key!r} has invalid provenance"
+    return None
 
 
 def normalize_value(value: Any, location: str) -> dict[str, Any]:
@@ -344,6 +342,9 @@ def validate(
         assert isinstance(case["context"], dict), (
             f"{location}: context must be an object"
         )
+        context_error = context_validation_error(case["context"])
+        if path.name == "valid.jsonl":
+            assert context_error is None, f"{location}: {context_error}"
         registry = case.get("registry")
         if registry is None:
             assert registry_version == PRODUCTION_REGISTRY_VERSION, (
@@ -397,6 +398,14 @@ def validate(
             assert validation_reason in expected_reasons, (
                 f"{location}: validation reason missing from expectedReasonCodes"
             )
+            if context_error is None:
+                assert validation_reason != (
+                    "AUDIENCE_EVALUATION_REASON_CODE_INVALID_CONTEXT"
+                ), f"{location}: INVALID_CONTEXT requires an invalid context"
+            else:
+                assert validation_reason == (
+                    "AUDIENCE_EVALUATION_REASON_CODE_INVALID_CONTEXT"
+                ), f"{location}: {context_error}"
 
         normalized_present = "expectedNormalizedExpression" in case
         fingerprint_present = "expectedFingerprint" in case

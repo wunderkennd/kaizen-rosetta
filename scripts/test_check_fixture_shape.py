@@ -254,20 +254,58 @@ class FixtureShapeTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "non-finite JSON number"):
             self.run_checker(valid=[case])
 
-    def test_rejects_exponent_form_number_lexeme(self) -> None:
-        raw = self.with_raw_member(valid_case(), '"lexicalProbe":1e0')
-        with self.assertRaisesRegex(AssertionError, "exponent-form"):
-            self.run_checker_raw(raw)
+    def test_accepts_value_equivalent_exponent_forms(self) -> None:
+        checker = load_checker()
+        self.assertEqual(
+            checker.canonical_json(checker.JsonFloat("1e0")),
+            checker.canonical_json(checker.JsonFloat("1.0")),
+        )
+        self.assertEqual(checker.canonical_json(checker.JsonFloat("1e0")), "1")
 
-    def test_rejects_integer_negative_zero_lexeme(self) -> None:
-        raw = self.with_raw_member(valid_case(), '"lexicalProbe":-0')
-        with self.assertRaisesRegex(AssertionError, "negative zero"):
-            self.run_checker_raw(raw)
+    def test_canonicalizes_json_integer_negative_zero(self) -> None:
+        checker = load_checker()
+        self.assertEqual(checker.canonical_json(checker.JsonInteger("-0")), "0")
 
-    def test_rejects_float_negative_zero_lexeme(self) -> None:
-        raw = self.with_raw_member(valid_case(), '"lexicalProbe":-0.0')
-        with self.assertRaisesRegex(AssertionError, "negative zero"):
-            self.run_checker_raw(raw)
+    def test_canonicalizes_json_float_negative_zero(self) -> None:
+        checker = load_checker()
+        self.assertEqual(checker.canonical_json(checker.JsonFloat("-0.0")), "0")
+
+    def test_accepts_rfc8785_official_style_numeric_vectors(self) -> None:
+        checker = load_checker()
+        vectors = {
+            "333333333.33333329": "333333333.3333333",
+            "1E30": "1e+30",
+            "4.50": "4.5",
+            "2e-3": "0.002",
+            "0.000000000000000000000000001": "1e-27",
+            "0.000001": "0.000001",
+            "0.0000001": "1e-7",
+            "5e-324": "5e-324",
+            "1.7976931348623157e308": "1.7976931348623157e+308",
+        }
+        for source, expected in vectors.items():
+            with self.subTest(source=source):
+                self.assertEqual(
+                    checker.canonical_json(checker.JsonFloat(source)),
+                    expected,
+                )
+
+    def test_rfc8785_serializes_unicode_strings_and_keys(self) -> None:
+        checker = load_checker()
+        self.assertEqual(
+            checker.canonical_json({"é": "café東京", "a": "€"}),
+            '{"a":"€","é":"café東京"}',
+        )
+
+    def test_rejects_all_non_finite_json_number_spellings(self) -> None:
+        for spelling in ("NaN", "Infinity", "-Infinity"):
+            with self.subTest(spelling=spelling):
+                raw = self.with_raw_member(
+                    valid_case(f"non-finite-{spelling}"),
+                    f'"lexicalProbe":{spelling}',
+                )
+                with self.assertRaisesRegex(ValueError, "non-finite JSON number"):
+                    self.run_checker_raw(raw)
 
     def test_rejects_duplicate_object_keys(self) -> None:
         raw = self.with_raw_member(valid_case(), '"caseId":"valid-case"')
@@ -279,18 +317,25 @@ class FixtureShapeTest(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "unsupported JSON integer"):
             self.run_checker_raw(raw)
 
-    def test_rejects_non_ascii_normalized_object_key(self) -> None:
+    def test_rejects_unspecified_context_provenance(self) -> None:
         case = valid_case()
-        case["expectedNormalizedExpression"] = {"é": "value"}
-        case["expectedFingerprint"] = "a" * 64
-        with self.assertRaisesRegex(AssertionError, "ASCII strings"):
+        case["context"] = {
+            "attributes": {
+                "country_code": {
+                    "value": {"stringValue": "US"},
+                    "provenance": "AUDIENCE_ATTRIBUTE_PROVENANCE_UNSPECIFIED",
+                }
+            },
+            "registryVersion": "2026-07-12",
+        }
+        with self.assertRaisesRegex(AssertionError, "invalid provenance"):
             self.run_checker(valid=[case])
 
     def test_rejects_null_in_normalized_expression(self) -> None:
         case = valid_case()
         case["expectedNormalizedExpression"] = {"predicate": None}
         case["expectedFingerprint"] = "a" * 64
-        with self.assertRaisesRegex(AssertionError, "unsupported canonical JSON value"):
+        with self.assertRaisesRegex(AssertionError, "normalized expression mismatch"):
             self.run_checker(valid=[case])
 
     def test_accepts_unicode_and_simple_double_vector(self) -> None:

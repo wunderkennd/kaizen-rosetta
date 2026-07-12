@@ -9,8 +9,9 @@ conformance corpus.
 
 Protovalidate annotations enforce constraints that are local to a field or
 message: a selected expression node, non-empty `ALL` and `ANY` groups, a child
-for `NOT`, bounded field sizes, and required rule identity, revision,
-expression, fingerprint, and registry version fields.
+for `NOT`, bounded field sizes, finite double values, required nonzero
+attribute provenance, and required rule identity, revision, expression,
+fingerprint, and registry version fields.
 
 The following constraints require semantic validation by every producer and
 consumer and must be represented in the shared conformance corpus:
@@ -43,6 +44,13 @@ the registry. Implementations must not coerce strings to numbers, numbers to
 strings, booleans to strings, or int64 values to doubles. `IN` and `NOT_IN`
 must not mix operand types. Regex evaluation must use a bounded,
 RE2-compatible engine; backtracking-only constructs are invalid.
+
+Every populated `AudienceAttribute` must declare exactly one of `OBSERVED`,
+`SYNTHETIC`, `DEFAULT`, or `OVERLAY`. `UNSPECIFIED` and unknown numeric enum
+values are invalid context and produce
+`AUDIENCE_EVALUATION_REASON_CODE_INVALID_CONTEXT`. Every `double_value` must
+be finite; NaN and positive or negative infinity are invalid at schema
+validation and must never enter normalization or evaluation.
 
 ## Missing attributes and expression evaluation (Normative)
 
@@ -109,9 +117,13 @@ Normalization is recursive:
 3. Normalize each logical child. For commutative `ALL` and `ANY` nodes, sort
    children by the raw bytes of each child's SHA-256 digest. Preserve the
    structure and child of `NOT`.
-4. Serialize the normalized data as RFC 8785 canonical JSON, hash its UTF-8
-   bytes with SHA-256, and encode the digest as 64 lowercase hexadecimal
-   characters.
+4. Serialize the normalized data with the complete RFC 8785 JSON
+   Canonicalization Scheme, hash its UTF-8 bytes with SHA-256, and encode the
+   digest as 64 lowercase hexadecimal characters. RFC 8785 finite-double
+   semantics apply: value-equivalent exponent spellings serialize identically,
+   negative zero serializes as `0`, subnormal and maximum finite IEEE 754
+   values use ECMAScript-compatible rendering, and Unicode property names are
+   sorted by UTF-16 code units. NaN and infinities are rejected.
 
 The shared conformance corpus defines the normalized JSON representation and
 typed ordering examples. Implementations must agree with its fingerprints;
@@ -135,10 +147,11 @@ regardless of registry sensitivity classification.
 Detailed traces are optional and may be disabled in production. Attribute
 provenance remains on the input context so preview interfaces can distinguish
 observed, synthetic, defaulted, and overlaid attributes without copying values
-into diagnostics. Audience contexts must not contain raw user identifiers,
-email addresses, dates of birth, raw watch history, or unrestricted profile or
-campaign payloads; producers must derive and authorize registered attributes
-before constructing a context.
+into diagnostics. Provenance is mandatory; `UNSPECIFIED` is never a valid
+placeholder for a populated attribute. Audience contexts must not contain raw
+user identifiers, email addresses, dates of birth, raw watch history, or
+unrestricted profile or campaign payloads; producers must derive and authorize
+registered attributes before constructing a context.
 
 ## Legacy Experimentation CNF mapping (Normative)
 

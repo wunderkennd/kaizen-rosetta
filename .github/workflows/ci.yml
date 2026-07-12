@@ -35,6 +35,16 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.26.1"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "25.2.1"
+
       - name: Run deterministic checks and release-manifest builder fixtures
         # This released commit is test input only. No candidate manifest is
         # created until a release supplies the BSR commit returned by buf push.
@@ -44,6 +54,9 @@ jobs:
 
       - name: Generate contracts
         run: just generate
+
+      - name: Compile generated Go and TypeScript contracts
+        run: just generated-contracts
 
       - name: Run Python contract tests
         run: just python-contracts

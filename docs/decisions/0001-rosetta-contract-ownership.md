@@ -33,6 +33,16 @@ require review by the owners declared in `.github/CODEOWNERS`. Until dedicated
 GitHub organization teams are established in this repository, those paths are
 owned by `@wunderkennd`.
 
+The current `wunderkennd` repository is personal, so GitHub cannot enforce the
+approved dual-review model with real domain-owner and schema-governance teams.
+This is a pre-production and default-BSR-promotion gate, not a naming problem
+to paper over with nonexistent teams. Before promoting any candidate to the
+default BSR `main` label, transfer the repository to an organization, create
+the applicable domain-owner and schema-governance teams, replace the temporary
+personal CODEOWNERS entries, and require approval from both teams through
+branch protection. Development labels may be used for prerelease verification;
+default `main` remains unpromoted until this gate is satisfied.
+
 The released `buf.build/kaizen/rosetta` module is the permanent compatibility
 baseline. CI and local verification compare proposed schema changes against
 that released baseline rather than an arbitrary local commit.

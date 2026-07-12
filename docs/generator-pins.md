@@ -17,7 +17,6 @@ together are the immutable generator reference used in `buf.gen.yaml`.
 | Protobuf Go | `buf.build/protocolbuffers/go:v1.36.11` | 1 | `sha256:0eecce1e016da605b2a607c9e5459bb75edaf279a6309c10caaa7b01377aebac` |
 | ConnectRPC Go | `buf.build/connectrpc/go:v1.20.0` | 1 | `sha256:b185f000f74573410701819bd670cd21a3f2d1cd8e458bce1c7c5d7b16148b88` |
 | Protobuf ES | `buf.build/bufbuild/es:v2.12.1` | 1 | `sha256:ecd4620a9d29e5f2a2eabce87c1672ebcbc42d3e84318c844088f01a88c5c80e` |
-| ConnectRPC ES | `buf.build/connectrpc/es:v1.6.1` | 2 | `sha256:fa07dc72027009767f5a1105d0838e33b5d67a1efff8412ede5ee58123643668` |
 | Protobuf Python | `buf.build/protocolbuffers/python:v33.5` | 1 | `sha256:687a411e4b169b1d4cb4be24a703f689ea10bff532a7e6b28286fe261b51be96` |
 | Protobuf Python type stubs | `buf.build/protocolbuffers/pyi:v33.5` | 1 | `sha256:39e1001832bb09729eb09e4895a4a96985942ac0936ff6b8fac8ba620d686e03` |
 | ConnectRPC Python | `buf.build/connectrpc/py:v0.11.0` | 1 | `sha256:1fe7ff5ff02d387a81bb96f2bc459f2d0ac4a275c270d96092f1594a1404d6c8` |
@@ -37,6 +36,32 @@ Every selected version and revision was fetched and executed by a clean
 `buf generate`. Two clean generations were compared by sorted file path and
 SHA-256 digest and produced identical manifests. Generated code remains build
 output under `gen/`; it is not committed.
+
+Go and TypeScript generation include imported schema dependencies so the local
+compiler gates cover complete self-contained generated trees, including
+Protovalidate descriptors. `just generated-contracts` uses clean temporary
+workspaces and pinned Go 1.26.1, Node.js 25.2.1, npm 11.6.2, TypeScript 5.9.3,
+Connect 1.20.0, Go protobuf 1.36.11, and Protobuf-ES 2.12.1. The scripts fail
+closed on a missing generated tree, missing tool, unexpected tool version, or
+any compiler failure and clean all temporary modules and package installs.
+
+Release manifests resolve each pin against the supplied immutable module
+commit with authenticated `buf registry sdk info` calls. They record the exact
+Go module, npm package, or Python distribution coordinate and resolved version,
+or an explicit `unavailable` publication status when the BSR does not publish
+a packaged SDK for that plugin. Publication never implies usability. A separate
+required verification record may mark a published SDK usable only after its
+exact coordinate and version compile or import successfully. Published but
+broken SDKs retain their real coordinate and version with `usable: false` and a
+failure reason. Missing, mismatched, duplicated, unverified, or
+commit-inconsistent metadata fails the release.
+
+ConnectRPC Python v0.11.0 is published but is not directly usable for Rosetta's
+nested service packages: its BSR wheel retains the known beyond-top-level
+relative import. Its release-manifest verification must remain `failed` and
+`usable: false`, naming the defect and the required guarded `just generate`
+repair, until a newly pinned generator produces an exact-coordinate wheel that
+passes the import smoke without rewriting.
 
 Python messages and type stubs use the official Google Protobuf generators.
 ConnectRPC Python uses `protobuf=google`, so its service modules import the
@@ -80,3 +105,13 @@ valid sibling imports for nested Google Protobuf modules. Updating the pin
 without removing or deliberately updating this guard fails closed on its
 version header; the permanent guard tests and generated-interface smoke test
 are the removal gate.
+
+## Retired generator
+
+`buf.build/connectrpc/es:v1.6.1`, revision 2, was retired on 2026-07-12. It is
+a Connect-ES v1 generator and depends on Protobuf-ES v1 output, so it is
+incompatible with the active Protobuf-ES v2.12.1 SDK. Connect-ES v2 does not use
+a separate `protoc-gen-connect-es`; Protobuf-ES v2 emits service descriptors,
+which the TypeScript gate now consumes with pinned `@connectrpc/connect` 2.1.2.
+The retired pin remains release history only and must not appear in active
+`buf.gen.yaml` pins or active generated-SDK coordinates.

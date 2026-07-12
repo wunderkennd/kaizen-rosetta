@@ -12,20 +12,19 @@ plugins:
     revision: 1
     out: gen/go
     opt: paths=source_relative
+    include_imports: true
   - remote: buf.build/connectrpc/go:v1.20.0
     revision: 1
     out: gen/go
     opt: paths=source_relative
+    include_imports: true
 
   # TypeScript (connect-web)
-  - remote: buf.build/connectrpc/es:v1.6.1
-    revision: 2
-    out: gen/ts
-    opt: target=ts
   - remote: buf.build/bufbuild/es:v2.12.1
     revision: 1
     out: gen/ts
     opt: target=ts
+    include_imports: true
 
   # Python (Google Protobuf messages and ConnectRPC services)
   - remote: buf.build/protocolbuffers/python:v33.5

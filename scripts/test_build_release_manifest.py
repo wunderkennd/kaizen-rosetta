@@ -4,6 +4,7 @@
 from pathlib import Path
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -23,11 +24,95 @@ plugins:
   - remote: buf.build/protocolbuffers/go:v1.36.11
     revision: 1
     out: gen/go
-  - remote: buf.build/connectrpc/es:v1.6.1
-    revision: 2
-    out: gen/ts
+  - remote: buf.build/connectrpc/go:v1.20.0
+    revision: 1
+    out: gen/go-connect
 """
 RELEASE_SOURCE_ERROR = "release sources must match the recorded Git commit"
+
+
+def generated_sdk_metadata(
+    buf_gen: str, commit: str = BASELINE_BSR_MODULE_COMMIT
+) -> dict[str, object]:
+    pins = []
+    for entry in re.split(r"(?m)^  - ", buf_gen)[1:]:
+        remote = re.search(
+            r"(?m)^\s*remote: (buf\.build/[^:]+):(v[0-9]+(?:\.[0-9]+){1,2})$",
+            entry,
+        )
+        revision = re.search(r"(?m)^\s*revision: ([1-9][0-9]*)$", entry)
+        if remote and revision:
+            pins.append((remote.group(1), remote.group(2), revision.group(1)))
+    sdks = []
+    for generator, plugin_version, revision_text in pins:
+        revision = int(revision_text)
+        owner, plugin = generator.removeprefix("buf.build/").split("/")
+        if plugin in {"python", "pyi", "py"}:
+            ecosystem = "python"
+            coordinate = f"kaizen-rosetta-{owner}-{plugin}"
+            core = plugin_version.removeprefix("v")
+            if core.count(".") == 1:
+                core += ".0"
+            version = f"{core}.{revision}.dev+{commit[:12]}"
+        elif plugin == "go":
+            ecosystem = "go"
+            coordinate = f"buf.build/gen/go/kaizen/rosetta/{owner}/{plugin}"
+            version = (
+                f"{plugin_version}-00000000000000-{commit[:12]}.{revision}"
+            )
+        else:
+            ecosystem = "npm"
+            coordinate = f"@buf/kaizen_rosetta.{owner}_{plugin}"
+            version = (
+                f"{plugin_version.removeprefix('v')}-00000000000000-"
+                f"{commit[:12]}.{revision}"
+            )
+        sdks.append(
+            {
+                "coordinate": coordinate,
+                "ecosystem": ecosystem,
+                "generator": generator,
+                "moduleCommit": commit,
+                "pluginRevision": revision,
+                "pluginVersion": plugin_version,
+                "publicationStatus": "published",
+                "version": version,
+            }
+        )
+    return {"moduleCommit": commit, "sdks": sdks}
+
+
+def generated_sdk_verifications(
+    buf_gen: str, commit: str = BASELINE_BSR_MODULE_COMMIT
+) -> dict[str, object]:
+    metadata = generated_sdk_metadata(buf_gen, commit)
+    return {
+        "moduleCommit": commit,
+        "verifications": [
+            {
+                "evidence": "fixture exact-coordinate consumer passed",
+                "generator": sdk["generator"],
+                "status": "passed",
+                "usable": True,
+            }
+            for sdk in metadata["sdks"]
+        ],
+    }
+
+
+def expected_generated_sdks(buf_gen: str) -> list[dict[str, object]]:
+    metadata = generated_sdk_metadata(buf_gen)
+    verification = generated_sdk_verifications(buf_gen)
+    by_generator = {
+        record["generator"]: record for record in verification["verifications"]
+    }
+    return sorted(
+        [
+            {**sdk, "verification": by_generator[sdk["generator"]]}
+            for sdk in metadata["sdks"]
+        ],
+        key=lambda sdk: sdk["generator"],
+    )
 
 
 class ReleaseManifestBuilderTests(unittest.TestCase):
@@ -61,6 +146,9 @@ class ReleaseManifestBuilderTests(unittest.TestCase):
         proto = directory / "proto"
         proto.mkdir()
         (proto / "fixture.proto").write_text('syntax = "proto3";\n')
+        retired = directory / "tools/release"
+        retired.mkdir(parents=True)
+        (retired / "retired-generators.json").write_text("[]\n")
 
         subprocess.run(
             ["git", "init", "-q", f"--object-format={object_format}"],
@@ -90,6 +178,14 @@ class ReleaseManifestBuilderTests(unittest.TestCase):
         (dist / "rosetta-descriptor.sha256").write_text(
             f"{descriptor_digest}\n" if descriptor_digest else ""
         )
+        sdk_metadata = dist / "test-sdk-metadata.json"
+        sdk_metadata.write_text(
+            json.dumps(generated_sdk_metadata(buf_gen), sort_keys=True) + "\n"
+        )
+        sdk_verification = dist / "test-sdk-verification.json"
+        sdk_verification.write_text(
+            json.dumps(generated_sdk_verifications(buf_gen), sort_keys=True) + "\n"
+        )
         bin_directory = directory / "bin"
         bin_directory.mkdir()
         fake_buf = bin_directory / "buf"
@@ -100,6 +196,8 @@ class ReleaseManifestBuilderTests(unittest.TestCase):
             **os.environ,
             "PATH": f"{bin_directory}{os.pathsep}{os.environ['PATH']}",
             "BSR_MODULE_COMMIT": BASELINE_BSR_MODULE_COMMIT,
+            "BSR_SDK_METADATA_FILE": str(sdk_metadata),
+            "BSR_SDK_VERIFICATION_FILE": str(sdk_verification),
         }
         return builder, environment
 
@@ -260,7 +358,7 @@ class ReleaseManifestBuilderTests(unittest.TestCase):
 
     def test_rejects_a_generator_without_a_version(self) -> None:
         unversioned_generator = PINNED_GENERATORS.replace(
-            "buf.build/connectrpc/es:v1.6.1", "buf.build/connectrpc/es"
+            "buf.build/connectrpc/go:v1.20.0", "buf.build/connectrpc/go"
         )
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
@@ -272,7 +370,7 @@ class ReleaseManifestBuilderTests(unittest.TestCase):
             self.assertIn("generator remote must pin an explicit version", result.stderr)
 
     def test_rejects_a_mutable_generator_version(self) -> None:
-        mutable_generator = PINNED_GENERATORS.replace("v1.6.1", "latest")
+        mutable_generator = PINNED_GENERATORS.replace("v1.20.0", "latest")
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             _, environment = self.make_project(root, buf_gen=mutable_generator)
@@ -283,7 +381,7 @@ class ReleaseManifestBuilderTests(unittest.TestCase):
             self.assertIn("generator remote must pin an explicit version", result.stderr)
 
     def test_rejects_a_malformed_generator_version(self) -> None:
-        malformed_generator = PINNED_GENERATORS.replace("v1.6.1", "v1latest")
+        malformed_generator = PINNED_GENERATORS.replace("v1.20.0", "v1latest")
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             _, environment = self.make_project(root, buf_gen=malformed_generator)
@@ -360,7 +458,7 @@ plugins:
             self.assertIn("generator plugin must select exactly one kind", result.stderr)
 
     def test_rejects_a_generator_without_a_revision(self) -> None:
-        missing_revision = PINNED_GENERATORS.replace("    revision: 2\n", "")
+        missing_revision = PINNED_GENERATORS.replace("    revision: 1\n", "", 1)
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             _, environment = self.make_project(root, buf_gen=missing_revision)
@@ -371,7 +469,9 @@ plugins:
             self.assertIn("generator remote must pin an explicit revision", result.stderr)
 
     def test_rejects_a_zero_generator_revision(self) -> None:
-        zero_revision = PINNED_GENERATORS.replace("    revision: 2\n", "    revision: 0\n")
+        zero_revision = PINNED_GENERATORS.replace(
+            "    revision: 1\n", "    revision: 0\n", 1
+        )
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             _, environment = self.make_project(root, buf_gen=zero_revision)
@@ -383,7 +483,7 @@ plugins:
 
     def test_rejects_duplicate_generator_names(self) -> None:
         duplicate_generator = PINNED_GENERATORS.replace(
-            "buf.build/connectrpc/es:v1.6.1",
+            "buf.build/connectrpc/go:v1.20.0",
             "buf.build/protocolbuffers/go:v1.36.11",
         )
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -397,8 +497,8 @@ plugins:
 
     def test_accepts_revision_before_remote(self) -> None:
         reordered_generator = PINNED_GENERATORS.replace(
-            "  - remote: buf.build/connectrpc/es:v1.6.1\n    revision: 2\n",
-            "  - revision: 2\n    remote: buf.build/connectrpc/es:v1.6.1\n",
+            "  - remote: buf.build/connectrpc/go:v1.20.0\n    revision: 1\n",
+            "  - revision: 1\n    remote: buf.build/connectrpc/go:v1.20.0\n",
         )
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
@@ -410,9 +510,9 @@ plugins:
             manifest = json.loads((root / "dist/release-manifest.json").read_text())
             self.assertIn(
                 {
-                    "name": "buf.build/connectrpc/es",
-                    "revision": 2,
-                    "version": "v1.6.1",
+                    "name": "buf.build/connectrpc/go",
+                    "revision": 1,
+                    "version": "v1.20.0",
                 },
                 manifest["generators"],
             )
@@ -443,11 +543,6 @@ plugins:
                         "version": "v2.12.1",
                     },
                     {
-                        "name": "buf.build/connectrpc/es",
-                        "revision": 2,
-                        "version": "v1.6.1",
-                    },
-                    {
                         "name": "buf.build/connectrpc/go",
                         "revision": 1,
                         "version": "v1.20.0",
@@ -473,7 +568,11 @@ plugins:
                         "version": "v33.5",
                     },
                 ],
+                "generatedSdks": expected_generated_sdks(
+                    (ROOT / "buf.gen.yaml").read_text()
+                ),
                 "gitCommit": git_commit,
+                "retiredGenerators": [],
             }
             expected_bytes = (
                 json.dumps(expected_manifest, indent=2, sort_keys=True) + "\n"
@@ -488,6 +587,181 @@ plugins:
 
             self.assertEqual(first_bytes, expected_bytes)
             self.assertEqual(second_bytes, expected_bytes)
+
+    def test_rejects_missing_generated_sdk_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            _, environment = self.make_project(root)
+            metadata_path = Path(environment["BSR_SDK_METADATA_FILE"])
+            metadata = json.loads(metadata_path.read_text())
+            metadata["sdks"].pop()
+            metadata_path.write_text(json.dumps(metadata))
+
+            result = self.run_builder(root, environment)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("generated SDK metadata missing", result.stderr)
+
+    def test_rejects_mismatched_sdk_commit_association(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            _, environment = self.make_project(root)
+            metadata_path = Path(environment["BSR_SDK_METADATA_FILE"])
+            metadata = json.loads(metadata_path.read_text())
+            metadata["sdks"][0]["moduleCommit"] = "f" * 32
+            metadata_path.write_text(json.dumps(metadata))
+
+            result = self.run_builder(root, environment)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("module commit mismatch", result.stderr)
+
+    def test_rejects_mismatched_sdk_version_association(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            _, environment = self.make_project(root)
+            metadata_path = Path(environment["BSR_SDK_METADATA_FILE"])
+            metadata = json.loads(metadata_path.read_text())
+            metadata["sdks"][0]["version"] = metadata["sdks"][0][
+                "version"
+            ].replace("v1.36.11", "v9.99.99")
+            metadata_path.write_text(json.dumps(metadata))
+
+            result = self.run_builder(root, environment)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("version/plugin association mismatch", result.stderr)
+
+    def test_rejects_duplicate_generated_sdk_coordinates(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            _, environment = self.make_project(root)
+            metadata_path = Path(environment["BSR_SDK_METADATA_FILE"])
+            metadata = json.loads(metadata_path.read_text())
+            metadata["sdks"][1]["coordinate"] = metadata["sdks"][0]["coordinate"]
+            metadata_path.write_text(json.dumps(metadata))
+
+            result = self.run_builder(root, environment)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("duplicate generated SDK coordinate", result.stderr)
+
+    def test_rejects_missing_available_generated_sdk_coordinate(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            _, environment = self.make_project(root)
+            metadata_path = Path(environment["BSR_SDK_METADATA_FILE"])
+            metadata = json.loads(metadata_path.read_text())
+            metadata["sdks"][0].pop("coordinate")
+            metadata_path.write_text(json.dumps(metadata))
+
+            result = self.run_builder(root, environment)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("generated SDK coordinate missing", result.stderr)
+
+    def test_rejects_mismatched_generated_sdk_coordinate(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            _, environment = self.make_project(root)
+            metadata_path = Path(environment["BSR_SDK_METADATA_FILE"])
+            metadata = json.loads(metadata_path.read_text())
+            metadata["sdks"][0]["coordinate"] += "-wrong"
+            metadata_path.write_text(json.dumps(metadata))
+
+            result = self.run_builder(root, environment)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("generated SDK coordinate mismatch", result.stderr)
+
+    def test_records_explicit_unavailable_generated_sdk_status(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            _, environment = self.make_project(root)
+            metadata_path = Path(environment["BSR_SDK_METADATA_FILE"])
+            metadata = json.loads(metadata_path.read_text())
+            unavailable = metadata["sdks"][0]
+            unavailable["publicationStatus"] = "unavailable"
+            unavailable["reason"] = "plugin does not publish a packaged SDK"
+            unavailable.pop("coordinate")
+            unavailable.pop("version")
+            metadata_path.write_text(json.dumps(metadata))
+            verification_path = Path(environment["BSR_SDK_VERIFICATION_FILE"])
+            verification = json.loads(verification_path.read_text())
+            record = next(
+                item
+                for item in verification["verifications"]
+                if item["generator"] == unavailable["generator"]
+            )
+            record.update(
+                {
+                    "status": "not_applicable",
+                    "usable": False,
+                    "reason": "SDK is not published",
+                }
+            )
+            record.pop("evidence")
+            verification_path.write_text(json.dumps(verification))
+
+            result = self.run_builder(root, environment)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            manifest = json.loads((root / "dist/release-manifest.json").read_text())
+            recorded = next(
+                sdk
+                for sdk in manifest["generatedSdks"]
+                if sdk["generator"] == unavailable["generator"]
+            )
+            self.assertEqual(recorded["publicationStatus"], "unavailable")
+            self.assertFalse(recorded["verification"]["usable"])
+            self.assertNotIn("coordinate", recorded)
+
+    def test_records_published_but_unusable_generated_sdk(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            _, environment = self.make_project(root)
+            verification_path = Path(environment["BSR_SDK_VERIFICATION_FILE"])
+            verification = json.loads(verification_path.read_text())
+            record = verification["verifications"][0]
+            record.update(
+                {
+                    "status": "failed",
+                    "usable": False,
+                    "reason": (
+                        "known nested-import defect; guarded just generate repair required"
+                    ),
+                }
+            )
+            record.pop("evidence")
+            verification_path.write_text(json.dumps(verification))
+
+            result = self.run_builder(root, environment)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            manifest = json.loads((root / "dist/release-manifest.json").read_text())
+            recorded = next(
+                sdk
+                for sdk in manifest["generatedSdks"]
+                if sdk["generator"] == record["generator"]
+            )
+            self.assertEqual(recorded["publicationStatus"], "published")
+            self.assertIsInstance(recorded["coordinate"], str)
+            self.assertFalse(recorded["verification"]["usable"])
+            self.assertEqual(recorded["verification"]["status"], "failed")
+
+    def test_rejects_missing_generated_sdk_verification(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            _, environment = self.make_project(root)
+            verification_path = Path(environment["BSR_SDK_VERIFICATION_FILE"])
+            verification = json.loads(verification_path.read_text())
+            verification["verifications"].pop()
+            verification_path.write_text(json.dumps(verification))
+
+            result = self.run_builder(root, environment)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("generated SDK verification missing", result.stderr)
 
     def test_concurrent_builders_use_unique_temporary_files_and_clean_up(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

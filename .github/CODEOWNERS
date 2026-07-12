@@ -1,6 +1,16 @@
 /proto/kaizen/audience/       @wunderkennd
 /proto/experimentation/       @wunderkennd
 /proto/recommendation/        @wunderkennd
+/registry/                    @wunderkennd
+/conformance/                 @wunderkennd
+/scripts/                     @wunderkennd
+/tests/                       @wunderkennd
+/tools/                       @wunderkennd
+/Justfile                     @wunderkennd
+/README.md                    @wunderkennd
+/docs/                        @wunderkennd
 /buf.yaml                     @wunderkennd
 /buf.gen.yaml                 @wunderkennd
+/.github/CODEOWNERS           @wunderkennd
+/.github/pull_request_template.md @wunderkennd
 /.github/workflows/           @wunderkennd

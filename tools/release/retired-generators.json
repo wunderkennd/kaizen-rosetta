@@ -1,0 +1,9 @@
+[
+  {
+    "name": "buf.build/connectrpc/es",
+    "reason": "Retired because Connect-ES v2 consumes Protobuf-ES v2 service descriptors directly with @connectrpc/connect v2; the v1.6.1 generator depends on Protobuf-ES v1 and is incompatible with the active v2 output.",
+    "retiredDate": "2026-07-12",
+    "revision": 2,
+    "version": "v1.6.1"
+  }
+]

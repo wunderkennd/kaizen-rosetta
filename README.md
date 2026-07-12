@@ -78,6 +78,11 @@ Compile the entire Protobuf tree into a unified image format to detect syntax or
 buf build
 ```
 
+The normal `just check` gate additionally validates all 48 audience fixtures,
+the schema-level provenance/finite-double cases, and the production registry
+TextProto. The registry must remain version `2026-07-12` with exactly the eight
+approved unique keys and complete, type-consistent operator metadata.
+
 ### 4. Code Generation (SDKs)
 Rosetta handles centralized Go, TypeScript, and Python client/server SDK code generation:
 ```bash
@@ -86,6 +91,18 @@ just generate
 This parses the pinned rules inside `buf.gen.yaml`, outputs generated files
 locally, and applies the guarded ConnectRPC Python import repair documented in
 [`docs/generator-pins.md`](docs/generator-pins.md).
+
+After generation, compile all locally generated packages and typed audience
+smokes in clean temporary workspaces:
+
+```bash
+just generated-contracts
+```
+
+The gate pins Go 1.26.1, Node.js 25.2.1, npm 11.6.2, TypeScript 5.9.3,
+`connectrpc.com/connect` 1.20.0, `google.golang.org/protobuf` 1.36.11, and
+`@bufbuild/protobuf` 2.12.1 with `@connectrpc/connect` 2.1.2. It never writes `go.mod`, `node_modules`, or
+compiler artifacts into `gen/` or the repository.
 
 ---
 
@@ -98,8 +115,8 @@ locally, and applies the guarded ConnectRPC Python import repair documented in
    - Generated using `buf.build/protocolbuffers/go` and `buf.build/connectrpc/go`.
    - Used by: `kaizen-alchemy-go` and `kaizen-experimentation` Go services.
 2. **TypeScript SDK (`gen/ts/`)**:
-   - Package Target: ConnectRPC/ES for Web and Node runtime clients.
-   - Generated using `buf.build/bufbuild/es` and `buf.build/connectrpc/es`.
+   - Package Target: Protobuf-ES v2 messages and service descriptors for Web and Node Connect clients.
+   - Generated using `buf.build/bufbuild/es`; applications use the descriptors with `@connectrpc/connect` v2.
    - Used by: `ATOM Curator Suite` (Vite) and A/B Decision Support Dashboard (Next.js).
 3. **Python SDK (`gen/python/`)**:
    - Package Target: Google Protobuf messages, type stubs, and ConnectRPC services.
@@ -122,12 +139,34 @@ After `buf push` returns the immutable BSR module commit for the candidate,
 build the descriptor and manifest together:
 
 ```bash
-BSR_MODULE_COMMIT=<commit-returned-by-buf-push> just release-manifest
+BSR_MODULE_COMMIT=<commit-returned-by-buf-push> \
+BSR_SDK_VERIFICATION_FILE=<exact-coordinate-verification.json> \
+just release-manifest
 ```
 
 The command writes `dist/release-manifest.json` with the Git commit, descriptor
-digest, Buf CLI version, BSR module commit, and the exact generator names,
-versions, and revisions parsed from `buf.gen.yaml`. The builder refuses an
+digest, Buf CLI version, BSR module commit, exact generator pins, and one
+generated-SDK record for every generator. Publication and usability are
+separate: `publicationStatus` says whether the coordinate was published, while
+the required `verification` object records `status`, `usable`, and exact-
+coordinate consumer evidence or a failure reason. Published records contain
+the exact package coordinate, SDK version, plugin version/revision, ecosystem,
+and associated immutable module commit. A plugin without a packaged SDK is
+kept as an explicit `unavailable` record with a reason and a `not_applicable`,
+unusable verification; it is never omitted or given an invented coordinate.
+Coordinates follow the BSR package managers:
+
+- Go: `buf.build/gen/go/kaizen/rosetta/{plugin-owner}/{plugin-name}`
+- npm: `@buf/kaizen_rosetta.{plugin-owner}_{plugin-name}`
+- Python: `kaizen-rosetta-{plugin-owner}-{plugin-name}`
+
+By default the builder resolves metadata with authenticated
+`buf registry sdk info` calls against the supplied immutable commit. Tests inject a deterministic
+metadata document through `BSR_SDK_METADATA_FILE`; production releases must
+use live BSR resolution. `BSR_SDK_VERIFICATION_FILE` is always required and
+must contain one commit-bound verification for every pin. Only a passed
+exact-coordinate consumer may set `usable: true`; published but broken SDKs
+remain published with `usable: false` and a concrete failure reason. The builder refuses an
 empty or Git-shaped BSR commit and never infers a BSR commit from the local Git
 revision. It also refuses staged, unstaged, or untracked release-source changes,
 so the descriptor, generator pins, tests, and release documentation are

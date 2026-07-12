@@ -1,5 +1,12 @@
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
+python-bin := env_var_or_default("ROSETTA_PYTHON_BIN", "python3")
+tooling-venv := env_var_or_default("ROSETTA_TOOLING_VENV", "/tmp/kaizen-rosetta-tooling-venv")
+
+tooling-sync:
+    "{{python-bin}}" -m venv "{{tooling-venv}}"
+    "{{tooling-venv}}/bin/python" -m pip install --disable-pip-version-check -q -r tools/python/requirements.lock
+
 format:
     buf format -w
 
@@ -17,6 +24,16 @@ generate:
     buf generate
     python3 scripts/fix_connectrpc_python_imports.py
 
+go-contracts:
+    scripts/compile_generated_go.sh
+
+typescript-contracts:
+    scripts/compile_generated_ts.sh
+
+generated-contracts:
+    scripts/compile_generated_go.sh
+    scripts/compile_generated_ts.sh
+
 python-contracts venv="/tmp/rosetta-test-venv":
     "${PYTHON_TEST_BIN:-python3}" -m venv "{{venv}}"
     "{{venv}}/bin/python" -m pip install -e tests/python
@@ -29,15 +46,24 @@ release-manifest: descriptor
     ./scripts/build_release_manifest.sh
     python3 -m json.tool dist/release-manifest.json > /dev/null
 
-fixtures:
-    python3 scripts/check_fixture_shape.py
-    python3 -m unittest scripts/test_check_fixture_shape.py
+fixtures: tooling-sync
+    "{{tooling-venv}}/bin/python" scripts/check_fixture_shape.py
+    "{{tooling-venv}}/bin/python" -m unittest scripts/test_check_fixture_shape.py
+    scripts/check_audience_schema_validation.sh
 
-check:
+registry: tooling-sync
+    "{{tooling-venv}}/bin/python" scripts/check_registry.py
+    "{{tooling-venv}}/bin/python" -m unittest scripts/test_check_registry.py
+
+check: tooling-sync
     buf format --diff --exit-code
     buf lint
     buf build
-    python3 scripts/check_fixture_shape.py
-    python3 -m unittest scripts/test_check_fixture_shape.py
-    python3 -m unittest scripts/test_fix_connectrpc_python_imports.py
-    python3 -m unittest scripts/test_build_release_manifest.py
+    "{{tooling-venv}}/bin/python" scripts/check_fixture_shape.py
+    "{{tooling-venv}}/bin/python" -m unittest scripts/test_check_fixture_shape.py
+    scripts/check_audience_schema_validation.sh
+    "{{tooling-venv}}/bin/python" scripts/check_registry.py
+    "{{tooling-venv}}/bin/python" -m unittest scripts/test_check_registry.py
+    "{{tooling-venv}}/bin/python" -m unittest scripts/test_fix_connectrpc_python_imports.py
+    "{{tooling-venv}}/bin/python" -m unittest scripts/test_compile_generated_sdks.py
+    "{{tooling-venv}}/bin/python" -m unittest scripts/test_build_release_manifest.py

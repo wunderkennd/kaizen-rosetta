@@ -17,7 +17,13 @@ enum AudienceAttributeProvenance {
 // AudienceAttribute pairs a typed value with its provenance.
 message AudienceAttribute {
   AudienceValue value = 1 [(buf.validate.field).required = true];
-  AudienceAttributeProvenance provenance = 2 [(buf.validate.field).enum.defined_only = true];
+  AudienceAttributeProvenance provenance = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).enum = {
+      defined_only: true
+      not_in: 0
+    }
+  ];
 }
 
 // AudienceContext is the versioned set of attributes supplied for evaluation.
