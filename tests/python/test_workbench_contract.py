@@ -99,6 +99,19 @@ async def invoke_asgi(
     return events
 
 
+async def exercise_generated_connect_asgi(
+    request: PreviewPageRequest,
+) -> list[dict[str, Any]]:
+    service = StaticWorkbenchService()
+    application = PageWorkbenchServiceASGIApplication(service)
+    client = PageWorkbenchServiceClient("http://testserver")
+    assert isinstance(client, PageWorkbenchServiceClient)
+    try:
+        return await invoke_asgi(application, MessageToJson(request).encode())
+    finally:
+        await client.close()
+
+
 def test_preview_protojson_and_generated_connect_asgi() -> None:
     request = PreviewPageRequest(
         synthetic_persona=SyntheticPersonaSubject(
@@ -111,10 +124,7 @@ def test_preview_protojson_and_generated_connect_asgi() -> None:
     decoded = Parse(MessageToJson(request), PreviewPageRequest())
     assert decoded == request
 
-    service = StaticWorkbenchService()
-    application = PageWorkbenchServiceASGIApplication(service)
-    client = PageWorkbenchServiceClient("http://testserver")
-    events = asyncio.run(invoke_asgi(application, MessageToJson(request).encode()))
+    events = asyncio.run(exercise_generated_connect_asgi(request))
     start = next(event for event in events if event["type"] == "http.response.start")
     body = b"".join(
         event.get("body", b"")
@@ -123,4 +133,3 @@ def test_preview_protojson_and_generated_connect_asgi() -> None:
     )
     assert start["status"] == 200
     assert json.loads(body)["page"]["modules"][0]["collection"]["items"][0]["resourceId"] == "series-1"
-    asyncio.run(client.close())
