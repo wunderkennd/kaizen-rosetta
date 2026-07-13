@@ -1,0 +1,23 @@
+[package]
+name = "rosetta-connect-rust-canary"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+publish = false
+
+[workspace]
+
+[dependencies]
+buffa = { version = "=0.7.1", features = ["json"] }
+buffa-descriptor = "=0.7.1"
+buffa-types = { version = "=0.7.1", features = ["json"] }
+connectrpc = { version = "=0.7.0", default-features = false, features = ["client", "server"] }
+hex = "=0.4.3"
+http-body = "=1.0.1"
+serde = { version = "=1.0.219", features = ["derive"] }
+serde_json = "=1.0.140"
+serde_json_canonicalizer = "=0.3.2"
+
+[build-dependencies]
+connectrpc-build = "=0.7.0"
+walkdir = "=2.5.0"
