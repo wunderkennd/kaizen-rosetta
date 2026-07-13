@@ -144,6 +144,18 @@ Those are consumer-compatibility pins, not remote generator entries in
 BSR-generated Cargo adoption trigger in
 [`ADR 0003`](docs/decisions/0003-rust-contract-distribution.md) is met.
 
+Run the fixed Rust certification baseline locally with:
+
+```bash
+just rust-contracts
+```
+
+The command uses Rust/Cargo 1.88.0, exports the immutable BSR commit recorded
+by the Just recipe, verifies its descriptor digest, and runs the complete
+locked Connect-Rust canary in a temporary workspace. After the canary passes,
+it atomically writes `dist/consumer-compatibility-rust.json`; failed runs
+remove any stale evidence and do not publish a passing record.
+
 ### Release manifests
 
 After `buf push` returns the immutable BSR module commit for the candidate,

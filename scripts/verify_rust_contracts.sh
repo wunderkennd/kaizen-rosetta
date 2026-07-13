@@ -7,6 +7,10 @@ expected_descriptor_sha256="${ROSETTA_RUST_DESCRIPTOR_SHA256-}"
 buf_bin="${BUF_BIN:-buf}"
 rustc_bin="${RUSTC_BIN:-rustc}"
 cargo_bin="${CARGO_BIN:-cargo}"
+evidence_file="${ROSETTA_RUST_EVIDENCE_FILE:-${root}/dist/consumer-compatibility-rust.json}"
+evidence_writer="${ROSETTA_RUST_EVIDENCE_WRITER:-${root}/scripts/write_rust_compatibility_evidence.py}"
+
+rm -f -- "${evidence_file}"
 
 if [[ ! "${bsr_commit}" =~ ^[0-9a-f]{32}$ ]]; then
   printf '%s\n' "ROSETTA_RUST_BSR_COMMIT must be exactly 32 lowercase hex characters" >&2
@@ -36,12 +40,16 @@ if [[ "${actual_cargo_version}" != "cargo 1.88.0 "* ]]; then
     "${actual_cargo_version}" >&2
   exit 1
 fi
+cargo_version="${actual_cargo_version#cargo }"
+cargo_version="${cargo_version%% *}"
 actual_rust_version="$("${rustc_bin}" --version)"
 if [[ "${actual_rust_version}" != "rustc 1.88.0 "* ]]; then
   printf 'Rust version mismatch: expected rustc 1.88.0, got %s\n' \
     "${actual_rust_version}" >&2
   exit 1
 fi
+rust_version="${actual_rust_version#rustc }"
+rust_version="${rust_version%% *}"
 actual_buf_version="$("${buf_bin}" --version)"
 if [[ "${actual_buf_version}" != "1.66.0" ]]; then
   printf 'Buf version mismatch: expected 1.66.0, got %s\n' \
@@ -70,3 +78,14 @@ CARGO_TARGET_DIR="${workspace}/target" \
   --manifest-path "${root}/tools/compatibility/rust/Cargo.toml" \
   --locked \
   --all-targets
+
+"${evidence_writer}" \
+  --repository-root "${root}" \
+  --manifest "${root}/tools/compatibility/rust/Cargo.toml" \
+  --lockfile "${root}/tools/compatibility/rust/Cargo.lock" \
+  --output "${evidence_file}" \
+  --bsr-module-commit "${bsr_commit}" \
+  --descriptor-sha256 "${expected_descriptor_sha256}" \
+  --cargo-version "${cargo_version}" \
+  --rust-version "${rust_version}" \
+  --cargo-bin "${cargo_bin}"
