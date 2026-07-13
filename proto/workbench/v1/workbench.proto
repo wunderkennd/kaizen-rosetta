@@ -1,0 +1,118 @@
+syntax = "proto3";
+
+package workbench.v1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
+import "kaizen/audience/v1/context.proto";
+
+enum ResourceKind {
+  RESOURCE_KIND_UNSPECIFIED = 0;
+  RESOURCE_KIND_SERIES = 1;
+  RESOURCE_KIND_MOVIE = 2;
+  RESOURCE_KIND_EPISODE = 3;
+}
+
+enum ModuleSource {
+  MODULE_SOURCE_UNSPECIFIED = 0;
+  MODULE_SOURCE_EDITORIAL = 1;
+  MODULE_SOURCE_PERSONALIZED = 2;
+  MODULE_SOURCE_FALLBACK = 3;
+}
+
+enum OptimizationStatus {
+  OPTIMIZATION_STATUS_UNSPECIFIED = 0;
+  OPTIMIZATION_STATUS_OPTIMIZED = 1;
+  OPTIMIZATION_STATUS_DEGRADED = 2;
+  OPTIMIZATION_STATUS_UNOPTIMIZED = 3;
+}
+
+message CraftedHistoryEntry {
+  string resource_id = 1 [(buf.validate.field).required = true];
+  ResourceKind resource_kind = 2 [(buf.validate.field).enum = {
+    defined_only: true
+    not_in: 0
+  }];
+  double completion_percentage = 3 [(buf.validate.field).double = {
+    gte: 0
+    lte: 1
+  }];
+  google.protobuf.Timestamp watched_at = 4;
+}
+
+message SyntheticPersonaSubject {
+  string persona_id = 1 [(buf.validate.field).required = true];
+  kaizen.audience.v1.AudienceContext audience_context = 2 [(buf.validate.field).required = true];
+  repeated CraftedHistoryEntry watch_history = 3 [(buf.validate.field).repeated.max_items = 100];
+}
+
+message MediaCard {
+  string resource_id = 1 [(buf.validate.field).required = true];
+  ResourceKind resource_kind = 2 [(buf.validate.field).enum = {
+    defined_only: true
+    not_in: 0
+  }];
+  string title = 3 [(buf.validate.field).required = true];
+  string image_url = 4;
+  bool previously_watched = 5;
+  uint32 original_position = 6;
+  uint32 final_position = 7;
+}
+
+message CollectionModule {
+  string heading = 1;
+  repeated MediaCard items = 2 [(buf.validate.field).repeated.min_items = 1];
+}
+
+message PageModule {
+  string module_id = 1 [(buf.validate.field).required = true];
+  ModuleSource source = 2 [(buf.validate.field).enum = {
+    defined_only: true
+    not_in: 0
+  }];
+  oneof module {
+    option (buf.validate.oneof).required = true;
+    CollectionModule collection = 3;
+  }
+}
+
+message PageDocument {
+  string page_id = 1 [(buf.validate.field).required = true];
+  repeated PageModule modules = 2;
+}
+
+message ScenarioManifest {
+  string scenario_id = 1 [(buf.validate.field).required = true];
+  string scenario_fingerprint = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.pattern = "^[0-9a-f]{64}$"
+  ];
+  string audience_registry_version = 3 [(buf.validate.field).required = true];
+}
+
+message PreviewWarning {
+  string code = 1 [(buf.validate.field).required = true];
+  string message = 2 [(buf.validate.field).required = true];
+}
+
+message PreviewPageRequest {
+  SyntheticPersonaSubject synthetic_persona = 1 [(buf.validate.field).required = true];
+  string page_key = 2 [(buf.validate.field).required = true];
+  string request_id = 3;
+}
+
+message PreviewPageResponse {
+  string contract_version = 1 [(buf.validate.field).required = true];
+  ScenarioManifest scenario = 2 [(buf.validate.field).required = true];
+  PageDocument page = 3 [(buf.validate.field).required = true];
+  OptimizationStatus optimization_status = 4 [(buf.validate.field).enum = {
+    defined_only: true
+    not_in: 0
+  }];
+  repeated PreviewWarning warnings = 5;
+  string correlation_id = 6 [(buf.validate.field).required = true];
+}
+
+service PageWorkbenchService {
+  rpc PreviewPage(PreviewPageRequest) returns (PreviewPageResponse);
+}

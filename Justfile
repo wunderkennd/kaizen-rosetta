@@ -64,6 +64,7 @@ check: tooling-sync
     scripts/check_audience_schema_validation.sh
     "{{tooling-venv}}/bin/python" scripts/check_registry.py
     "{{tooling-venv}}/bin/python" -m unittest scripts/test_check_registry.py
+    "{{tooling-venv}}/bin/python" -m unittest scripts/test_workbench_schema.py
     "{{tooling-venv}}/bin/python" -m unittest scripts/test_fix_connectrpc_python_imports.py
     "{{tooling-venv}}/bin/python" -m unittest scripts/test_compile_generated_sdks.py
     "{{tooling-venv}}/bin/python" -m unittest scripts/test_build_release_manifest.py
