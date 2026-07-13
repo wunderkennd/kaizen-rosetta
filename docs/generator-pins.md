@@ -4,6 +4,16 @@ Rosetta pins every remote code generator by released version and BSR revision
 so local builds and release artifacts do not change when a plugin publishes a
 new release or rebuild.
 
+Go consumers receive BSR-generated module coordinates from the remote pins
+below. Rust v1 deliberately does not add a remote generator to `buf.gen.yaml`:
+it consumes an immutable schema export from a pinned BSR module commit through
+locked Cargo `build.rs` generation. Its Rust 1.88.0, `connectrpc` 0.7.0,
+`connectrpc-build` 0.7.0, `buffa` 0.7.1, and `buffa-types` 0.7.1 pins are
+consumer-compatibility pins recorded in Cargo files, not entries in
+`buf.gen.yaml`. This asymmetry remains in force until the BSR-generated Cargo
+adoption trigger in
+[`ADR 0003`](decisions/0003-rust-contract-distribution.md) is satisfied.
+
 ## Selected releases
 
 Selection date: 2026-07-12. Each selection is the newest non-prerelease

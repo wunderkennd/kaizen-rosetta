@@ -76,6 +76,22 @@ the source of truth for campaign authoring. Their upstream provenance and
 replacement path must be established before expanding them as a Rosetta-owned
 API.
 
+### Contract distribution and Rust runtime boundary
+
+Rosetta's language distribution paths are intentionally asymmetric. Go
+consumers use BSR-generated module coordinates. Rust v1 consumers pin an
+immutable BSR schema export and run locked Cargo `build.rs` generation with the
+consumer-compatible Rust 1.88.0, Connect-Rust 0.7.0, and Buffa 0.7.1 line.
+These Rust versions are compatibility pins in the consumer's Cargo files, not
+generator entries in `buf.gen.yaml`.
+
+This mechanism does not expand Rosetta's runtime role. Consumer repositories
+continue to own handlers, security, middleware, operations, deployment,
+performance, and domain bridges. A BSR-generated Cargo SDK replaces build-time
+generation only after it supplies commit-bound Buffa messages and Connect-Rust
+client/server traits and passes the same certification canary, as specified in
+[`ADR 0003`](decisions/0003-rust-contract-distribution.md).
+
 ### 1. Curated Merchandising
 Curators use the **ATOM Curator Suite** to configure hero banners, promotional carousels, and editorial fallbacks. Current integration builds use the temporary reconstructed `program.v4` subset to describe the external campaign boundary; that subset is not the authoring source of truth. Campaigns are parsed by `content-promotion-go` in `merchandising-apis` and synced down to the hot-path engine (`kaizen-accelerator`) so that promotional material is dynamically woven into user pages alongside personalized rows.
 

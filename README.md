@@ -131,10 +131,18 @@ after pinning a Java generator and adding a Java compilation test.
 
 ### Rust consumers
 
-Rust services consume the Rosetta module pinned to an immutable BSR module
-commit, or consume the descriptor artifact identified by a release manifest.
-They use their own pinned Rust generator toolchain; they must not copy Rosetta
-`.proto` files into downstream repositories.
+Go consumers use BSR-generated module coordinates. Rust v1 intentionally uses
+a different distribution path: it consumes an immutable schema export from a
+pinned BSR module commit and runs locked build-time generation through Cargo
+`build.rs`. Rust services must not copy Rosetta `.proto` files into downstream
+repositories.
+
+The Rust 1.88.0 certification line pins `connectrpc` and `connectrpc-build` to
+0.7.0 and `buffa` and `buffa-types` to 0.7.1 in the consumer's Cargo files.
+Those are consumer-compatibility pins, not remote generator entries in
+`buf.gen.yaml`. This Go/Rust asymmetry remains deliberate until the
+BSR-generated Cargo adoption trigger in
+[`ADR 0003`](docs/decisions/0003-rust-contract-distribution.md) is met.
 
 ### Release manifests
 
