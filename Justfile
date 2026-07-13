@@ -40,13 +40,15 @@ python-contracts venv="/tmp/rosetta-test-venv":
     "{{venv}}/bin/python" -m pytest tests/python -q
 
 rust-contracts:
+    if [[ -n "${BSR_MODULE_COMMIT:-}" ]]; then test -n "${ROSETTA_RUST_BSR_COMMIT:-}"; test "${BSR_MODULE_COMMIT}" = "${ROSETTA_RUST_BSR_COMMIT}"; fi
     ROSETTA_RUST_BSR_COMMIT="${ROSETTA_RUST_BSR_COMMIT:-045c39860c9c40178a3a1ed3088c218f}" ROSETTA_RUST_DESCRIPTOR_SHA256="${ROSETTA_RUST_DESCRIPTOR_SHA256:-077c2d8d31c41bcdac5bc97ed1e6407dfdae95a80e0d86712c960b997dc254fa}" scripts/verify_rust_contracts.sh
 
 descriptor:
     ./scripts/descriptor_digest.sh
 
-release-manifest: descriptor
-    ./scripts/build_release_manifest.sh
+release-manifest: descriptor rust-contracts
+    test -s dist/consumer-compatibility-rust.json
+    ROSETTA_RUST_COMPATIBILITY_FILE=dist/consumer-compatibility-rust.json ./scripts/build_release_manifest.sh
     python3 -m json.tool dist/release-manifest.json > /dev/null
 
 fixtures: tooling-sync

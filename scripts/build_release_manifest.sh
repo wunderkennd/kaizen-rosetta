@@ -16,6 +16,23 @@ if [[ "${BSR_MODULE_COMMIT}" == "00000000000000000000000000000000" ]]; then
   printf '%s\n' 'BSR_MODULE_COMMIT must not be all zeros' >&2
   exit 1
 fi
+if [[ -z "${ROSETTA_RUST_BSR_COMMIT:-}" ]]; then
+  printf '%s\n' 'ROSETTA_RUST_BSR_COMMIT is required' >&2
+  exit 1
+fi
+if [[ "${ROSETTA_RUST_BSR_COMMIT}" != "${BSR_MODULE_COMMIT}" ]]; then
+  printf '%s\n' \
+    'ROSETTA_RUST_BSR_COMMIT must equal BSR_MODULE_COMMIT' >&2
+  exit 1
+fi
+if [[ -z "${ROSETTA_RUST_COMPATIBILITY_FILE:-}" ]]; then
+  printf '%s\n' 'ROSETTA_RUST_COMPATIBILITY_FILE is required' >&2
+  exit 1
+fi
+if [[ ! -s "${ROSETTA_RUST_COMPATIBILITY_FILE}" ]]; then
+  printf '%s\n' 'Rust compatibility evidence is required' >&2
+  exit 1
+fi
 
 descriptor_digest_file="${root}/dist/rosetta-descriptor.sha256"
 local_descriptor_file="${root}/dist/rosetta-descriptor.binpb"
@@ -115,7 +132,15 @@ mkdir -p "${root}/dist"
 manifest_output="${root}/dist/release-manifest.json"
 temporary_output="$(mktemp "${manifest_output}.tmp.XXXXXX")"
 temporary_sdk_metadata=""
-trap 'rm -f -- "${temporary_output}" "${temporary_sdk_metadata}"' EXIT
+temporary_rust_evidence="$(mktemp "${manifest_output}.rust.XXXXXX")"
+trap 'rm -f -- "${temporary_output}" "${temporary_sdk_metadata}" "${temporary_rust_evidence}"' EXIT
+python3 "${root}/scripts/validate_consumer_compatibility.py" \
+  --evidence "${ROSETTA_RUST_COMPATIBILITY_FILE}" \
+  --bsr-module-commit "${BSR_MODULE_COMMIT}" \
+  --descriptor-sha256 "${descriptor_sha256}" \
+  --git-commit "${git_commit}" \
+  --cargo-lock "${root}/tools/compatibility/rust/Cargo.lock" \
+  > "${temporary_rust_evidence}"
 sdk_metadata_file="${BSR_SDK_METADATA_FILE:-}"
 if [[ -z "${sdk_metadata_file}" ]]; then
   temporary_sdk_metadata="$(mktemp "${manifest_output}.sdks.XXXXXX")"
@@ -143,7 +168,8 @@ python3 - \
   "${descriptor_sha256}" \
   "${git_commit}" \
   "${sdk_metadata_file}" \
-  "${sdk_verification_file}" <<'PY'
+  "${sdk_verification_file}" \
+  "${temporary_rust_evidence}" <<'PY'
 from pathlib import Path
 import json
 import re
@@ -158,6 +184,7 @@ descriptor_sha256 = sys.argv[5]
 git_commit = sys.argv[6]
 sdk_metadata_path = Path(sys.argv[7])
 sdk_verification_path = Path(sys.argv[8])
+rust_evidence_path = Path(sys.argv[9])
 generators = []
 plugin_entries = []
 current_entry = None
@@ -529,10 +556,18 @@ if missing_verifications:
 for generator, sdk in sdk_by_generator.items():
     sdk["verification"] = verification_by_generator[generator]
 
+try:
+    normalized_rust_evidence = json.loads(rust_evidence_path.read_text())
+except (OSError, json.JSONDecodeError) as error:
+    raise SystemExit(f"invalid normalized Rust compatibility evidence: {error}") from error
+if not isinstance(normalized_rust_evidence, dict):
+    raise SystemExit("normalized Rust compatibility evidence must be an object")
+
 manifest = {
     "bsrModule": "buf.build/kaizen/rosetta",
     "bsrModuleCommit": bsr_module_commit,
     "bufCliVersion": buf_cli_version,
+    "consumerCompatibility": {"rust": normalized_rust_evidence},
     "descriptorSha256": descriptor_sha256,
     "generatorPinsDocument": "docs/generator-pins.md",
     "generators": sorted(generators, key=lambda generator: generator["name"]),
@@ -547,5 +582,5 @@ manifest = {
 output.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
 PY
 mv -f -- "${temporary_output}" "${manifest_output}"
-rm -f -- "${temporary_sdk_metadata}"
+rm -f -- "${temporary_sdk_metadata}" "${temporary_rust_evidence}"
 trap - EXIT

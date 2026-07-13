@@ -52,6 +52,15 @@ def _require_lowercase_hex(value: object, *, length: int, label: str) -> str:
     return value
 
 
+def _require_git_object_id(value: object, *, label: str) -> str:
+    error = f"{label} must be 40 or 64 lowercase hexadecimal characters"
+    if type(value) is not str:
+        raise ValueError(error)
+    if re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", value) is None:
+        raise ValueError(error)
+    return value
+
+
 def validate_document(
     document: dict[str, object],
     *,
@@ -116,9 +125,8 @@ def validate_rust_evidence(
         length=64,
         label="expected descriptor SHA-256",
     )
-    normalized_git_commit = _require_lowercase_hex(
+    normalized_git_commit = _require_git_object_id(
         git_commit,
-        length=40,
         label="expected Git commit",
     )
     if not isinstance(cargo_lock_path, Path):
@@ -134,9 +142,8 @@ def validate_rust_evidence(
         length=64,
         label="descriptor SHA-256",
     )
-    evidence_git_commit = _require_lowercase_hex(
+    evidence_git_commit = _require_git_object_id(
         evidence["gitCommit"],
-        length=40,
         label="Git commit",
     )
     evidence_cargo_lock_sha256 = _require_lowercase_hex(

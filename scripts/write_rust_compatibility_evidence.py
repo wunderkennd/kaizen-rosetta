@@ -78,8 +78,10 @@ def current_git_commit(git_bin: str, repository_root: Path) -> str:
     commit = command_output(
         [git_bin, "rev-parse", "--verify", "HEAD^{commit}"], repository_root
     )
-    if re.fullmatch(r"[0-9a-f]{40}", commit) is None:
-        raise SystemExit("git rev-parse did not return a 40-character commit")
+    if re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", commit) is None:
+        raise SystemExit(
+            "git rev-parse did not return a 40- or 64-character commit"
+        )
     return commit
 
 

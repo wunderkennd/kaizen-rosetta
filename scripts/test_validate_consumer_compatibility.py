@@ -152,13 +152,13 @@ class ConsumerCompatibilityValidationTests(unittest.TestCase):
                 "gitCommit",
                 [GIT_COMMIT],
                 "git_commit",
-                "expected Git commit must be 40 lowercase hexadecimal characters",
+                "expected Git commit must be 40 or 64 lowercase hexadecimal characters",
             ),
             "Git malformed": (
                 "gitCommit",
                 "g" * 40,
                 "git_commit",
-                "expected Git commit must be 40 lowercase hexadecimal characters",
+                "expected Git commit must be 40 or 64 lowercase hexadecimal characters",
             ),
         }
 
@@ -206,12 +206,12 @@ class ConsumerCompatibilityValidationTests(unittest.TestCase):
             "Git non-string": (
                 "gitCommit",
                 [GIT_COMMIT],
-                "Git commit must be 40 lowercase hexadecimal characters",
+                "Git commit must be 40 or 64 lowercase hexadecimal characters",
             ),
             "Git malformed": (
                 "gitCommit",
                 "g" * 40,
-                "Git commit must be 40 lowercase hexadecimal characters",
+                "Git commit must be 40 or 64 lowercase hexadecimal characters",
             ),
             "lock digest non-string": (
                 "cargoLockSha256",
@@ -241,6 +241,48 @@ class ConsumerCompatibilityValidationTests(unittest.TestCase):
                 git_commit=GIT_COMMIT,
                 cargo_lock_path=str(self.cargo_lock),  # type: ignore[arg-type]
             )
+
+    def test_accepts_sha1_and_sha256_git_object_ids(self) -> None:
+        for length in (40, 64):
+            with self.subTest(length=length):
+                git_commit = "b" * length
+                document = self.valid_document()
+                document["records"][0]["gitCommit"] = git_commit  # type: ignore[index]
+
+                normalized = validate_document(
+                    document,
+                    bsr_module_commit=BSR_MODULE_COMMIT,
+                    descriptor_sha256=DESCRIPTOR_SHA256,
+                    git_commit=git_commit,
+                    cargo_lock_path=self.cargo_lock,
+                )
+
+                self.assertEqual(normalized["gitCommit"], git_commit)
+
+    def test_rejects_other_git_object_id_lengths_and_nonhex_values(self) -> None:
+        for name, git_commit in {
+            "39 characters": "b" * 39,
+            "41 characters": "b" * 41,
+            "63 characters": "b" * 63,
+            "65 characters": "b" * 65,
+            "nonhex SHA-1": "g" * 40,
+            "nonhex SHA-256": "g" * 64,
+        }.items():
+            with self.subTest(name=name):
+                document = self.valid_document()
+                document["records"][0]["gitCommit"] = git_commit  # type: ignore[index]
+
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "Git commit must be 40 or 64 lowercase hexadecimal characters",
+                ):
+                    validate_document(
+                        document,
+                        bsr_module_commit=BSR_MODULE_COMMIT,
+                        descriptor_sha256=DESCRIPTOR_SHA256,
+                        git_commit=git_commit,
+                        cargo_lock_path=self.cargo_lock,
+                    )
 
     def test_cli_emits_only_deterministic_normalized_record_json(self) -> None:
         document = self.valid_document()

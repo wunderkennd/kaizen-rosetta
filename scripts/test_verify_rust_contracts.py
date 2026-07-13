@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.write_rust_compatibility_evidence import locked_crate_versions
+from scripts.write_rust_compatibility_evidence import current_git_commit, locked_crate_versions
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -195,6 +195,28 @@ exit "${FAKE_CARGO_EXIT:-0}"
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("exactly 32 lowercase hex", result.stderr)
         self.assertNotIn("injected", result.stderr)
+
+    def test_just_rejects_mismatched_release_commit_before_canary(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            environment = self.fake_tools(directory)
+            evidence = Path(environment["ROSETTA_RUST_EVIDENCE_FILE"])
+            evidence.write_text("untouched evidence\n", encoding="utf-8")
+            environment["BSR_MODULE_COMMIT"] = "f" * 32
+
+            result = subprocess.run(
+                ["just", "rust-contracts"],
+                cwd=ROOT,
+                env=os.environ | environment,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            remaining_evidence = evidence.read_text(encoding="utf-8")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(remaining_evidence, "untouched evidence\n")
 
     def test_propagates_buf_export_failure(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -433,6 +455,43 @@ printf '%s\\n' '{"b" * 40}'
                 "schema": "rosetta.consumer-compatibility.v1",
             },
         )
+
+    def test_writer_accepts_sha1_and_sha256_git_object_ids(self) -> None:
+        for length in (40, 64):
+            with self.subTest(length=length):
+                with tempfile.TemporaryDirectory() as temporary_directory:
+                    directory = Path(temporary_directory)
+                    fake_git = self.executable(
+                        directory / "git",
+                        f"#!/usr/bin/env bash\nprintf '%s\\n' '{'b' * length}'\n",
+                    )
+
+                    commit = current_git_commit(str(fake_git), directory)
+
+                    self.assertEqual(commit, "b" * length)
+
+    def test_writer_rejects_other_git_object_id_shapes(self) -> None:
+        for name, value in {
+            "39 characters": "b" * 39,
+            "41 characters": "b" * 41,
+            "63 characters": "b" * 63,
+            "65 characters": "b" * 65,
+            "nonhex SHA-1": "g" * 40,
+            "nonhex SHA-256": "g" * 64,
+        }.items():
+            with self.subTest(name=name):
+                with tempfile.TemporaryDirectory() as temporary_directory:
+                    directory = Path(temporary_directory)
+                    fake_git = self.executable(
+                        directory / "git",
+                        f"#!/usr/bin/env bash\nprintf '%s\\n' '{value}'\n",
+                    )
+
+                    with self.assertRaisesRegex(
+                        SystemExit,
+                        "git rev-parse did not return a 40- or 64-character commit",
+                    ):
+                        current_git_commit(str(fake_git), directory)
 
     def test_writer_rejects_missing_locked_crate_version(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

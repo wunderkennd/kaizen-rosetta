@@ -82,6 +82,22 @@ descriptor, whose recorded SHA-256 digest is independently recomputed. SDK
 resolution and successful exact-coordinate checks therefore cannot attach a
 manifest to an unrelated, otherwise valid BSR commit.
 
+Rust certification remains a separate consumer-compatibility path. Before
+release-manifest assembly, `just release-manifest` runs `just rust-contracts`
+with `ROSETTA_RUST_BSR_COMMIT` equal to the exact `BSR_MODULE_COMMIT` returned
+by `buf push`. The validator binds the resulting evidence to that BSR commit,
+the SHA-256 produced by `just descriptor`, the repository Git commit, and the
+tracked Rust `Cargo.lock`. It also requires the fixed Rust/Cargo and crate
+versions, the `rust-contracts-v1` canary identity, all five checks, and a passed
+status.
+
+The release manifest records the normalized evidence only at
+`consumerCompatibility.rust`. Existing `generators`, `generatedSdks`, and
+`retiredGenerators` remain unchanged; Rust gains no invented remote generator,
+SDK coordinate, or publication status. Missing, malformed, stale, duplicated,
+failed, or dirty-source evidence fails the release rather than producing a
+partial claim.
+
 ConnectRPC Python v0.11.0 is published but is not directly usable for Rosetta's
 nested service packages: its BSR wheel retains the known beyond-top-level
 relative import. Its release-manifest verification must remain `failed` and

@@ -161,20 +161,31 @@ slots with values from the successful canary output.
 ### Release manifests
 
 After `buf push` returns the immutable BSR module commit for the candidate,
-build the descriptor and manifest together:
+export the three release inputs, then build the manifest:
 
 ```bash
-BSR_MODULE_COMMIT=<commit-returned-by-buf-push> \
-BSR_SDK_VERIFICATION_FILE=<exact-coordinate-verification.json> \
-just release-manifest
+test -n "$BSR_MODULE_COMMIT"
+test -n "$ROSETTA_RUST_DESCRIPTOR_SHA256"
+test -s "$BSR_SDK_VERIFICATION_FILE"
+ROSETTA_RUST_BSR_COMMIT="$BSR_MODULE_COMMIT" just release-manifest
 ```
 
-The command writes `dist/release-manifest.json` with the Git commit, descriptor
-digest, Buf CLI version, BSR module commit, exact generator pins, and one
-generated-SDK record for every generator. Publication and usability are
-separate: `publicationStatus` says whether the coordinate was published, while
-the required `verification` object records `status`, `usable`, and exact-
-coordinate consumer evidence or a failure reason. Published records contain
+`BSR_MODULE_COMMIT` is the exact immutable commit returned by `buf push`,
+`ROSETTA_RUST_DESCRIPTOR_SHA256` is the digest produced by `just descriptor`,
+and `BSR_SDK_VERIFICATION_FILE` is the exact-coordinate verification input.
+The recipe requires the Rust canary to use that same BSR commit before any BSR
+access, reruns the canary, and accepts only its newly written
+`dist/consumer-compatibility-rust.json` evidence.
+
+The command writes `dist/release-manifest.json` with the validated concrete Git
+commit, descriptor digest, Buf CLI version, BSR module commit, exact generator
+pins, one generated-SDK record for every generator, and the separate
+`consumerCompatibility.rust` canary record. Rust remains a consumer
+compatibility record: it is not added as a generator, generated SDK,
+coordinate, or publication status. Publication and usability are separate:
+`publicationStatus` says whether the coordinate was published, while the
+required `verification` object records `status`, `usable`, and exact-coordinate
+consumer evidence or a failure reason. Published records contain
 the exact package coordinate, SDK version, plugin version/revision, ecosystem,
 and associated immutable module commit. A plugin without a packaged SDK is
 kept as an explicit `unavailable` record with a reason and a `not_applicable`,
@@ -203,6 +214,13 @@ empty or Git-shaped BSR commit and never infers a BSR commit from the local Git
 revision. Before writing a manifest it builds that exact immutable BSR ref and
 requires its descriptor bytes to match the local descriptor and recorded
 SHA-256 digest, preventing a valid but unrelated BSR commit from being claimed.
+The Rust evidence is independently validated against the same exact BSR
+commit, local descriptor SHA-256, full 40- or 64-character repository Git
+commit, and tracked `tools/compatibility/rust/Cargo.lock` digest. Its fixed
+Rust/Cargo versions, crate versions, canary identity, checks, and passed status
+must also match the certification contract. The manifest stores only the
+validator's normalized record; missing, stale, duplicated, dirty-source, or
+failed evidence aborts the release.
 It also refuses staged, unstaged, or untracked release-source changes,
 so the descriptor, generator pins, tests, and release documentation are
 reproducible from the recorded `gitCommit`. Generated `dist/` and `gen/` output

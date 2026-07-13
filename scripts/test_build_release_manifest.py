@@ -2,6 +2,8 @@
 """Contract tests for the deterministic release-manifest builder."""
 
 from pathlib import Path
+import copy
+import hashlib
 import json
 import os
 import re
@@ -30,6 +32,51 @@ plugins:
     out: gen/go-connect
 """
 RELEASE_SOURCE_ERROR = "release sources must match the recorded Git commit"
+CHECKS = [
+    "all-generated-packages",
+    "audience-binary",
+    "audience-protojson",
+    "server-streaming-interface",
+    "unary-interface",
+]
+CRATE_VERSIONS = {
+    "buffa": "0.7.1",
+    "buffa-types": "0.7.1",
+    "connectrpc": "0.7.0",
+    "connectrpc-build": "0.7.0",
+}
+
+
+def valid_rust_evidence(
+    *,
+    module_commit: str,
+    descriptor_sha256: str,
+    git_commit: str,
+    cargo_lock_sha256: str,
+) -> dict[str, object]:
+    return {
+        "adapter": "connect-rust",
+        "bsrModule": "buf.build/kaizen/rosetta",
+        "bsrModuleCommit": module_commit,
+        "canary": "rust-contracts-v1",
+        "cargoLockSha256": cargo_lock_sha256,
+        "cargoVersion": "1.88.0",
+        "checks": list(CHECKS),
+        "crateVersions": dict(CRATE_VERSIONS),
+        "descriptorSha256": descriptor_sha256,
+        "generationMode": "cargo-build-rs-bsr-export",
+        "gitCommit": git_commit,
+        "rustVersion": "1.88.0",
+        "schema": "rosetta.consumer-compatibility.rust.v1",
+        "status": "passed",
+    }
+
+
+def rust_evidence_document(record: dict[str, object]) -> dict[str, object]:
+    return {
+        "records": [record],
+        "schema": "rosetta.consumer-compatibility.v1",
+    }
 
 
 def generated_sdk_metadata(
@@ -140,6 +187,9 @@ class ReleaseManifestBuilderTests(unittest.TestCase):
         scripts.mkdir()
         builder = scripts / SCRIPT.name
         shutil.copy2(SCRIPT, builder)
+        shutil.copy2(ROOT / "scripts/validate_consumer_compatibility.py", scripts)
+        shutil.copy2(ROOT / "scripts/verify_rust_contracts.sh", scripts)
+        shutil.copy2(ROOT / "scripts/write_rust_compatibility_evidence.py", scripts)
 
         (directory / "buf.gen.yaml").write_text(buf_gen)
         (directory / "buf.yaml").write_text("version: v2\n")
@@ -156,6 +206,10 @@ class ReleaseManifestBuilderTests(unittest.TestCase):
         retired = directory / "tools/release"
         retired.mkdir(parents=True)
         (retired / "retired-generators.json").write_text("[]\n")
+        rust_canary = directory / "tools/compatibility/rust"
+        rust_canary.mkdir(parents=True)
+        shutil.copy2(ROOT / "tools/compatibility/rust/Cargo.lock", rust_canary)
+        shutil.copy2(ROOT / "tools/compatibility/rust/build.rs", rust_canary)
 
         subprocess.run(
             ["git", "init", "-q", f"--object-format={object_format}"],
@@ -196,10 +250,43 @@ class ReleaseManifestBuilderTests(unittest.TestCase):
         sdk_verification.write_text(
             json.dumps(generated_sdk_verifications(buf_gen), sort_keys=True) + "\n"
         )
+        git_commit = ""
+        if with_git_commit:
+            git_commit = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=directory,
+                text=True,
+                capture_output=True,
+                check=True,
+            ).stdout.strip()
+        rust_lock_digest = hashlib.sha256(
+            (rust_canary / "Cargo.lock").read_bytes()
+        ).hexdigest()
+        rust_evidence = dist / "test-rust-evidence.json"
+        rust_evidence.write_text(
+            json.dumps(
+                rust_evidence_document(
+                    valid_rust_evidence(
+                        module_commit=BASELINE_BSR_MODULE_COMMIT,
+                        descriptor_sha256=DESCRIPTOR_SHA256,
+                        git_commit=git_commit or "b" * 40,
+                        cargo_lock_sha256=rust_lock_digest,
+                    )
+                ),
+                sort_keys=True,
+            )
+            + "\n"
+        )
         bin_directory = directory / "bin"
         bin_directory.mkdir()
         fake_buf = bin_directory / "buf"
-        fake_buf.write_text("#!/usr/bin/env bash\nprintf '%s\\n' '1.66.0'\n")
+        fake_buf.write_text(
+            "#!/usr/bin/env bash\n"
+            "if [[ -n \"${FAKE_BUF_MARKER:-}\" ]]; then\n"
+            "  : > \"${FAKE_BUF_MARKER}\"\n"
+            "fi\n"
+            "printf '%s\\n' '1.66.0'\n"
+        )
         fake_buf.chmod(0o755)
 
         environment = {
@@ -209,6 +296,8 @@ class ReleaseManifestBuilderTests(unittest.TestCase):
             "BSR_DESCRIPTOR_FILE": str(bsr_descriptor),
             "BSR_SDK_METADATA_FILE": str(sdk_metadata),
             "BSR_SDK_VERIFICATION_FILE": str(sdk_verification),
+            "ROSETTA_RUST_BSR_COMMIT": BASELINE_BSR_MODULE_COMMIT,
+            "ROSETTA_RUST_COMPATIBILITY_FILE": str(rust_evidence),
         }
         return builder, environment
 
@@ -222,6 +311,20 @@ class ReleaseManifestBuilderTests(unittest.TestCase):
             text=True,
             capture_output=True,
             check=False,
+        )
+
+    def read_rust_evidence(
+        self, environment: dict[str, str]
+    ) -> dict[str, object]:
+        return json.loads(
+            Path(environment["ROSETTA_RUST_COMPATIBILITY_FILE"]).read_text()
+        )
+
+    def write_rust_evidence(
+        self, environment: dict[str, str], document: object
+    ) -> None:
+        Path(environment["ROSETTA_RUST_COMPATIBILITY_FILE"]).write_text(
+            json.dumps(document) + "\n"
         )
 
     def test_rejects_a_missing_bsr_module_commit(self) -> None:
@@ -256,6 +359,228 @@ class ReleaseManifestBuilderTests(unittest.TestCase):
 
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("BSR_MODULE_COMMIT must not be all zeros", result.stderr)
+
+    def test_requires_the_rust_release_commit_before_buf_access(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            _, environment = self.make_project(root)
+            environment.pop("ROSETTA_RUST_BSR_COMMIT")
+            marker = root / "buf-invoked"
+            environment["FAKE_BUF_MARKER"] = str(marker)
+
+            result = self.run_builder(root, environment)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("ROSETTA_RUST_BSR_COMMIT is required", result.stderr)
+            self.assertFalse(marker.exists())
+
+    def test_rejects_mismatched_release_commits_before_buf_access(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            _, environment = self.make_project(root)
+            environment["ROSETTA_RUST_BSR_COMMIT"] = "f" * 32
+            marker = root / "buf-invoked"
+            environment["FAKE_BUF_MARKER"] = str(marker)
+
+            result = self.run_builder(root, environment)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(
+                "ROSETTA_RUST_BSR_COMMIT must equal BSR_MODULE_COMMIT",
+                result.stderr,
+            )
+            self.assertFalse(marker.exists())
+
+    def test_requires_a_rust_compatibility_input(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            _, environment = self.make_project(root)
+            environment.pop("ROSETTA_RUST_COMPATIBILITY_FILE")
+
+            result = self.run_builder(root, environment)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("ROSETTA_RUST_COMPATIBILITY_FILE is required", result.stderr)
+
+    def test_rejects_a_missing_rust_compatibility_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            _, environment = self.make_project(root)
+            Path(environment["ROSETTA_RUST_COMPATIBILITY_FILE"]).unlink()
+
+            result = self.run_builder(root, environment)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Rust compatibility evidence is required", result.stderr)
+
+    def test_rejects_an_empty_rust_compatibility_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            _, environment = self.make_project(root)
+            Path(environment["ROSETTA_RUST_COMPATIBILITY_FILE"]).write_text("")
+
+            result = self.run_builder(root, environment)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Rust compatibility evidence is required", result.stderr)
+
+    def test_rejects_invalid_rust_compatibility_json(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            _, environment = self.make_project(root)
+            Path(environment["ROSETTA_RUST_COMPATIBILITY_FILE"]).write_text(
+                "{not-json\n"
+            )
+
+            result = self.run_builder(root, environment)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("invalid consumer compatibility JSON", result.stderr)
+
+    def test_rejects_missing_rust_evidence_record(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            _, environment = self.make_project(root)
+            evidence = self.read_rust_evidence(environment)
+            evidence["records"] = []
+            self.write_rust_evidence(environment, evidence)
+
+            result = self.run_builder(root, environment)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("exactly one Rust evidence record required", result.stderr)
+
+    def test_rejects_duplicate_rust_evidence_records(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            _, environment = self.make_project(root)
+            evidence = self.read_rust_evidence(environment)
+            evidence["records"].append(copy.deepcopy(evidence["records"][0]))
+            self.write_rust_evidence(environment, evidence)
+
+            result = self.run_builder(root, environment)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("duplicate Rust evidence", result.stderr)
+
+    def test_rejects_rust_evidence_for_a_stale_bsr_commit(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            _, environment = self.make_project(root)
+            evidence = self.read_rust_evidence(environment)
+            evidence["records"][0]["bsrModuleCommit"] = "f" * 32
+            self.write_rust_evidence(environment, evidence)
+
+            result = self.run_builder(root, environment)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("BSR commit mismatch", result.stderr)
+
+    def test_rejects_rust_evidence_for_a_stale_descriptor(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            _, environment = self.make_project(root)
+            evidence = self.read_rust_evidence(environment)
+            evidence["records"][0]["descriptorSha256"] = "f" * 64
+            self.write_rust_evidence(environment, evidence)
+
+            result = self.run_builder(root, environment)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("descriptor mismatch", result.stderr)
+
+    def test_rejects_rust_evidence_for_a_stale_git_commit(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            _, environment = self.make_project(root)
+            evidence = self.read_rust_evidence(environment)
+            evidence["records"][0]["gitCommit"] = "f" * 40
+            self.write_rust_evidence(environment, evidence)
+
+            result = self.run_builder(root, environment)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Git commit mismatch", result.stderr)
+
+    def test_rejects_rust_evidence_for_a_stale_lock_digest(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            _, environment = self.make_project(root)
+            evidence = self.read_rust_evidence(environment)
+            evidence["records"][0]["cargoLockSha256"] = "f" * 64
+            self.write_rust_evidence(environment, evidence)
+
+            result = self.run_builder(root, environment)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Cargo.lock digest mismatch", result.stderr)
+
+    def test_rejects_wrong_rust_toolchain_or_crate_versions(self) -> None:
+        cases = {
+            "Cargo": ("cargoVersion", "1.89.0", "Cargo version mismatch"),
+            "Rust": ("rustVersion", "1.89.0", "Rust version mismatch"),
+            "crates": ("crateVersions", {}, "crate version mismatch"),
+        }
+        for name, (field, value, error) in cases.items():
+            with self.subTest(name=name):
+                with tempfile.TemporaryDirectory() as temporary_directory:
+                    root = Path(temporary_directory)
+                    _, environment = self.make_project(root)
+                    evidence = self.read_rust_evidence(environment)
+                    evidence["records"][0][field] = value
+                    self.write_rust_evidence(environment, evidence)
+
+                    result = self.run_builder(root, environment)
+
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(error, result.stderr)
+
+    def test_rejects_wrong_rust_canary_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            _, environment = self.make_project(root)
+            evidence = self.read_rust_evidence(environment)
+            evidence["records"][0]["canary"] = "other-canary"
+            self.write_rust_evidence(environment, evidence)
+
+            result = self.run_builder(root, environment)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("canary mismatch", result.stderr)
+
+    def test_rejects_failed_rust_compatibility_status(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            _, environment = self.make_project(root)
+            evidence = self.read_rust_evidence(environment)
+            evidence["records"][0]["status"] = "failed"
+            self.write_rust_evidence(environment, evidence)
+
+            result = self.run_builder(root, environment)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("status must be passed", result.stderr)
+
+    def test_rejects_dirty_tracked_rust_certification_sources(self) -> None:
+        source_paths = (
+            "tools/compatibility/rust/build.rs",
+            "scripts/validate_consumer_compatibility.py",
+            "scripts/verify_rust_contracts.sh",
+            "scripts/write_rust_compatibility_evidence.py",
+        )
+        for source_path in source_paths:
+            with self.subTest(source_path=source_path):
+                with tempfile.TemporaryDirectory() as temporary_directory:
+                    root = Path(temporary_directory)
+                    _, environment = self.make_project(root)
+                    source = root / source_path
+                    source.write_text(source.read_text() + "\n# dirty\n")
+
+                    result = self.run_builder(root, environment)
+
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(RELEASE_SOURCE_ERROR, result.stderr)
+                    self.assertIn(source_path, result.stderr)
 
     def test_rejects_an_empty_descriptor_digest(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -568,6 +893,16 @@ plugins:
                 "bsrModule": "buf.build/kaizen/rosetta",
                 "bsrModuleCommit": BASELINE_BSR_MODULE_COMMIT,
                 "bufCliVersion": "1.66.0",
+                "consumerCompatibility": {
+                    "rust": valid_rust_evidence(
+                        module_commit=BASELINE_BSR_MODULE_COMMIT,
+                        descriptor_sha256=DESCRIPTOR_SHA256,
+                        git_commit=git_commit,
+                        cargo_lock_sha256=hashlib.sha256(
+                            (ROOT / "tools/compatibility/rust/Cargo.lock").read_bytes()
+                        ).hexdigest(),
+                    )
+                },
                 "descriptorSha256": DESCRIPTOR_SHA256,
                 "generatorPinsDocument": "docs/generator-pins.md",
                 "generators": [
@@ -621,6 +956,23 @@ plugins:
 
             self.assertEqual(first_bytes, expected_bytes)
             self.assertEqual(second_bytes, expected_bytes)
+            manifest = json.loads(first_bytes)
+            for field in ("generatedSdks", "generators", "retiredGenerators"):
+                with self.subTest(field=field):
+                    self.assertEqual(
+                        json.dumps(manifest[field], indent=2, sort_keys=True) + "\n",
+                        json.dumps(expected_manifest[field], indent=2, sort_keys=True)
+                        + "\n",
+                    )
+            self.assertEqual(len(manifest["generators"]), 6)
+            self.assertEqual(len(manifest["generatedSdks"]), 6)
+            self.assertFalse(
+                any(
+                    "rust" in json.dumps(record).lower()
+                    for field in ("generators", "generatedSdks")
+                    for record in manifest[field]
+                )
+            )
 
     def test_rejects_missing_generated_sdk_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -939,7 +1291,14 @@ plugins:
             manifest = json.loads((root / "dist/release-manifest.json").read_text())
             self.assertEqual(manifest["bsrModuleCommit"], BASELINE_BSR_MODULE_COMMIT)
             self.assertEqual(
+                manifest["consumerCompatibility"]["rust"]["bsrModuleCommit"],
+                BASELINE_BSR_MODULE_COMMIT,
+            )
+            self.assertEqual(
                 list((root / "dist").glob("release-manifest.json.tmp.*")), []
+            )
+            self.assertEqual(
+                list((root / "dist").glob("release-manifest.json.rust.*")), []
             )
 
 
