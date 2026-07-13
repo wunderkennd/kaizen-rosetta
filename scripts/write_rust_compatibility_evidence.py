@@ -35,6 +35,7 @@ def command_output(command: list[str], repository_root: Path) -> str:
 def locked_crate_versions(
     cargo_bin: str, manifest: Path, repository_root: Path
 ) -> dict[str, str]:
+    """Select one version per crate, allowing distinct IDs/sources at that version."""
     metadata = json.loads(
         command_output(
             [

@@ -9,6 +9,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from scripts.write_rust_compatibility_evidence import locked_crate_versions
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts/verify_rust_contracts.sh"
@@ -59,6 +61,20 @@ class RustContractVerificationScriptTest(unittest.TestCase):
             check=False,
         )
 
+    def locked_versions_for_packages(
+        self, directory: Path, packages: list[dict[str, str]]
+    ) -> dict[str, str]:
+        metadata = json.dumps({"packages": packages})
+        fake_cargo = self.executable(
+            directory / "metadata-cargo",
+            f"""#!/usr/bin/env python3
+print({metadata!r})
+""",
+        )
+        return locked_crate_versions(
+            str(fake_cargo), directory / "Cargo.toml", directory
+        )
+
     def fake_tools(self, directory: Path) -> dict[str, str]:
         fake_buf = self.executable(
             directory / "buf",
@@ -103,7 +119,7 @@ if [[ "$1" == "--version" ]]; then
   exit 0
 fi
 if [[ -n "${CARGO_ARGS_FILE:-}" ]]; then
-  printf '%s\\n' "$*" > "${CARGO_ARGS_FILE}"
+  printf '%s\\n' "$*" >> "${CARGO_ARGS_FILE}"
 fi
 if [[ "$1" == "metadata" ]]; then
   printf '%s\\n' '{"packages":[{"name":"buffa","version":"0.7.1"},{"name":"buffa-types","version":"0.7.1"},{"name":"connectrpc","version":"0.7.0"},{"name":"connectrpc-build","version":"0.7.0"}]}'
@@ -159,6 +175,26 @@ exit "${FAKE_CARGO_EXIT:-0}"
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("exactly 32 lowercase hex", result.stderr)
+
+    def test_just_passes_environment_values_without_shell_reinterpretation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            evidence = Path(temporary_directory) / "consumer-compatibility-rust.json"
+            result = subprocess.run(
+                ["just", "rust-contracts"],
+                cwd=ROOT,
+                env=os.environ
+                | {
+                    "ROSETTA_RUST_BSR_COMMIT": "$(printf injected >&2)",
+                    "ROSETTA_RUST_DESCRIPTOR_SHA256": VALID_DESCRIPTOR_SHA256,
+                    "ROSETTA_RUST_EVIDENCE_FILE": str(evidence),
+                },
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("exactly 32 lowercase hex", result.stderr)
+        self.assertNotIn("injected", result.stderr)
 
     def test_propagates_buf_export_failure(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -267,16 +303,26 @@ printf '%s\\n' '{{"status":"passed"}}' > "$2"
             captured_writer_args.index("--rust-version") + 2,
         )
 
-    def test_uses_locked_dependency_resolution(self) -> None:
+    def test_canary_cargo_test_uses_locked_dependency_resolution(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             directory = Path(temporary_directory)
             cargo_args = directory / "cargo-args"
             environment = self.fake_tools(directory)
             environment["CARGO_ARGS_FILE"] = str(cargo_args)
             result = self.run_script(environment)
-            captured_args = cargo_args.read_text(encoding="utf-8")
+            captured_invocations = [
+                invocation.split()
+                for invocation in cargo_args.read_text(encoding="utf-8").splitlines()
+            ]
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("--locked", captured_args.split())
+        cargo_test_invocations = [
+            invocation
+            for invocation in captured_invocations
+            if invocation and invocation[0] == "test"
+        ]
+        self.assertEqual(len(cargo_test_invocations), 1)
+        self.assertIn("--locked", cargo_test_invocations[0])
+        self.assertIn("--all-targets", cargo_test_invocations[0])
 
     def test_writer_uses_locked_metadata_for_deterministic_atomic_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -385,6 +431,83 @@ printf '%s\\n' '{"b" * 40}'
                     }
                 ],
                 "schema": "rosetta.consumer-compatibility.v1",
+            },
+        )
+
+    def test_writer_rejects_missing_locked_crate_version(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            with self.assertRaisesRegex(
+                SystemExit,
+                "exactly one locked version for connectrpc-build",
+            ):
+                self.locked_versions_for_packages(
+                    directory,
+                    [
+                        {"name": "buffa", "version": "0.7.1"},
+                        {"name": "buffa-types", "version": "0.7.1"},
+                        {"name": "connectrpc", "version": "0.7.0"},
+                    ],
+                )
+
+    def test_writer_rejects_conflicting_locked_crate_versions(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            with self.assertRaisesRegex(
+                SystemExit,
+                "exactly one locked version for connectrpc",
+            ):
+                self.locked_versions_for_packages(
+                    directory,
+                    [
+                        {"name": "buffa", "version": "0.7.1"},
+                        {"name": "buffa-types", "version": "0.7.1"},
+                        {
+                            "id": "registry-a#connectrpc@0.7.0",
+                            "name": "connectrpc",
+                            "source": "registry-a",
+                            "version": "0.7.0",
+                        },
+                        {
+                            "id": "registry-b#connectrpc@0.8.1",
+                            "name": "connectrpc",
+                            "source": "registry-b",
+                            "version": "0.8.1",
+                        },
+                        {"name": "connectrpc-build", "version": "0.7.0"},
+                    ],
+                )
+
+    def test_writer_accepts_distinct_package_ids_at_the_same_version(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            versions = self.locked_versions_for_packages(
+                directory,
+                [
+                    {"name": "buffa", "version": "0.7.1"},
+                    {"name": "buffa-types", "version": "0.7.1"},
+                    {
+                        "id": "registry-a#connectrpc@0.7.0",
+                        "name": "connectrpc",
+                        "source": "registry-a",
+                        "version": "0.7.0",
+                    },
+                    {
+                        "id": "registry-b#connectrpc@0.7.0",
+                        "name": "connectrpc",
+                        "source": "registry-b",
+                        "version": "0.7.0",
+                    },
+                    {"name": "connectrpc-build", "version": "0.7.0"},
+                ],
+            )
+        self.assertEqual(
+            versions,
+            {
+                "buffa": "0.7.1",
+                "buffa-types": "0.7.1",
+                "connectrpc": "0.7.0",
+                "connectrpc-build": "0.7.0",
             },
         )
 

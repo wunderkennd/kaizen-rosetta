@@ -2,8 +2,6 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 
 python-bin := env_var_or_default("ROSETTA_PYTHON_BIN", "python3")
 tooling-venv := env_var_or_default("ROSETTA_TOOLING_VENV", "/tmp/kaizen-rosetta-tooling-venv")
-rust-bsr-commit := env_var_or_default("ROSETTA_RUST_BSR_COMMIT", "045c39860c9c40178a3a1ed3088c218f")
-rust-descriptor-sha256 := env_var_or_default("ROSETTA_RUST_DESCRIPTOR_SHA256", "077c2d8d31c41bcdac5bc97ed1e6407dfdae95a80e0d86712c960b997dc254fa")
 
 tooling-sync:
     "{{python-bin}}" -m venv "{{tooling-venv}}"
@@ -42,7 +40,7 @@ python-contracts venv="/tmp/rosetta-test-venv":
     "{{venv}}/bin/python" -m pytest tests/python -q
 
 rust-contracts:
-    ROSETTA_RUST_BSR_COMMIT="{{rust-bsr-commit}}" ROSETTA_RUST_DESCRIPTOR_SHA256="{{rust-descriptor-sha256}}" scripts/verify_rust_contracts.sh
+    ROSETTA_RUST_BSR_COMMIT="${ROSETTA_RUST_BSR_COMMIT:-045c39860c9c40178a3a1ed3088c218f}" ROSETTA_RUST_DESCRIPTOR_SHA256="${ROSETTA_RUST_DESCRIPTOR_SHA256:-077c2d8d31c41bcdac5bc97ed1e6407dfdae95a80e0d86712c960b997dc254fa}" scripts/verify_rust_contracts.sh
 
 descriptor:
     ./scripts/descriptor_digest.sh
