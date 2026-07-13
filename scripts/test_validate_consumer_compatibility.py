@@ -7,6 +7,8 @@ import copy
 import hashlib
 import json
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -14,6 +16,7 @@ from scripts.validate_consumer_compatibility import validate_document
 
 
 ROOT = Path(__file__).resolve().parents[1]
+VALIDATOR = ROOT / "scripts/validate_consumer_compatibility.py"
 BSR_MODULE_COMMIT = "045c39860c9c40178a3a1ed3088c218f"
 DESCRIPTOR_SHA256 = (
     "077c2d8d31c41bcdac5bc97ed1e6407dfdae95a80e0d86712c960b997dc254fa"
@@ -75,6 +78,33 @@ class ConsumerCompatibilityValidationTests(unittest.TestCase):
             cargo_lock_path=self.cargo_lock,
         )
 
+    def run_cli(self, evidence_path: Path) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                sys.executable,
+                str(VALIDATOR),
+                "--evidence",
+                str(evidence_path),
+                "--bsr-module-commit",
+                BSR_MODULE_COMMIT,
+                "--descriptor-sha256",
+                DESCRIPTOR_SHA256,
+                "--git-commit",
+                GIT_COMMIT,
+                "--cargo-lock",
+                str(self.cargo_lock),
+            ],
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+    def write_evidence(self, value: object) -> Path:
+        evidence_path = Path(self.temporary_directory.name) / "evidence.json"
+        evidence_path.write_text(json.dumps(value), encoding="utf-8")
+        return evidence_path
+
     def test_returns_a_detached_normalized_rust_record(self) -> None:
         document = self.valid_document()
 
@@ -87,6 +117,38 @@ class ConsumerCompatibilityValidationTests(unittest.TestCase):
         self.assertIsNot(normalized["crateVersions"], expected["crateVersions"])
         document["records"][0]["checks"].append("late-mutation")  # type: ignore[index,union-attr]
         self.assertEqual(normalized["checks"], CHECKS)
+
+    def test_cli_emits_only_deterministic_normalized_record_json(self) -> None:
+        document = self.valid_document()
+
+        result = self.run_cli(self.write_evidence(document))
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, "")
+        self.assertEqual(
+            result.stdout,
+            json.dumps(document["records"][0], indent=2, sort_keys=True) + "\n",  # type: ignore[index]
+        )
+
+    def test_cli_rejects_malformed_json_without_a_traceback(self) -> None:
+        evidence_path = Path(self.temporary_directory.name) / "evidence.json"
+        evidence_path.write_text("{not-json\n", encoding="utf-8")
+
+        result = self.run_cli(evidence_path)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(result.stderr, "invalid consumer compatibility JSON\n")
+
+    def test_cli_rejects_mismatched_evidence_without_a_traceback(self) -> None:
+        document = self.valid_document()
+        document["records"][0]["bsrModuleCommit"] = "f" * 32  # type: ignore[index]
+
+        result = self.run_cli(self.write_evidence(document))
+
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(result.stderr, "BSR commit mismatch\n")
 
     def test_rejects_required_single_field_mutations(self) -> None:
         cases = {

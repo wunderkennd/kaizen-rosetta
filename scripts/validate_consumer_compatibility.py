@@ -3,8 +3,11 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
+import json
 from pathlib import Path
+import sys
 
 
 DOCUMENT_FIELDS = {"records", "schema"}
@@ -142,3 +145,51 @@ def validate_rust_evidence(
         "schema": "rosetta.consumer-compatibility.rust.v1",
         "status": "passed",
     }
+
+
+def parse_arguments() -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--evidence", required=True, type=Path)
+    parser.add_argument("--bsr-module-commit", required=True)
+    parser.add_argument("--descriptor-sha256", required=True)
+    parser.add_argument("--git-commit", required=True)
+    parser.add_argument("--cargo-lock", required=True, type=Path)
+    return parser.parse_args()
+
+
+def main() -> int:
+    arguments = parse_arguments()
+    try:
+        evidence_bytes = arguments.evidence.read_bytes()
+    except OSError:
+        print("consumer compatibility evidence file unreadable", file=sys.stderr)
+        return 1
+
+    try:
+        document = json.loads(evidence_bytes)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        print("invalid consumer compatibility JSON", file=sys.stderr)
+        return 1
+
+    try:
+        normalized = validate_document(
+            document,
+            bsr_module_commit=arguments.bsr_module_commit,
+            descriptor_sha256=arguments.descriptor_sha256,
+            git_commit=arguments.git_commit,
+            cargo_lock_path=arguments.cargo_lock,
+        )
+    except OSError:
+        print("Cargo.lock unreadable", file=sys.stderr)
+        return 1
+    except ValueError as error:
+        print(error, file=sys.stderr)
+        return 1
+
+    json.dump(normalized, sys.stdout, indent=2, sort_keys=True)
+    sys.stdout.write("\n")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
