@@ -11,12 +11,15 @@ from pathlib import Path
 from typing import Any
 
 
-REMOTE = re.compile(
-    r"^\s*-\s+remote:\s+"
-    r"(buf\.build/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+):"
-    r"(v[0-9]+(?:\.[0-9]+){1,2})\s*$"
+PLUGIN_ITEM = re.compile(
+    r"^  -(?:\s+([A-Za-z_][A-Za-z0-9_]*):\s*(.*))?$"
 )
-REVISION = re.compile(r"^\s+revision:\s+([1-9][0-9]*)\s*$")
+PLUGIN_FIELD = re.compile(r"^    ([A-Za-z_][A-Za-z0-9_]*):\s*(.*)$")
+REMOTE = re.compile(
+    r"(buf\.build/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+):"
+    r"(v[0-9]+(?:\.[0-9]+){1,2})"
+)
+REVISION = re.compile(r"[1-9][0-9]*")
 
 
 def coordinate(generator: str) -> tuple[str, str]:
@@ -31,21 +34,48 @@ def coordinate(generator: str) -> tuple[str, str]:
 
 
 def parse_pins(path: Path) -> list[tuple[str, str, int]]:
-    pins: list[tuple[str, str, int]] = []
-    pending: tuple[str, str] | None = None
+    plugin_entries: list[dict[str, str]] = []
+    current_entry: dict[str, str] | None = None
+    in_plugins = False
+
     for line in path.read_text(encoding="utf-8").splitlines():
-        remote = REMOTE.fullmatch(line)
-        if remote:
-            if pending is not None:
-                raise SystemExit(f"generator {pending[0]} is missing a revision")
-            pending = (remote.group(1), remote.group(2))
+        if not in_plugins:
+            if re.fullmatch(r"plugins:\s*(?:#.*)?", line):
+                in_plugins = True
             continue
-        revision = REVISION.fullmatch(line)
-        if revision and pending is not None:
-            pins.append((*pending, int(revision.group(1))))
-            pending = None
-    if pending is not None:
-        raise SystemExit(f"generator {pending[0]} is missing a revision")
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        if not line.startswith(" "):
+            break
+
+        item = PLUGIN_ITEM.fullmatch(line)
+        if item:
+            if current_entry is not None:
+                plugin_entries.append(current_entry)
+            current_entry = {}
+            if item.group(1) is not None:
+                current_entry[item.group(1)] = item.group(2).strip()
+            continue
+
+        field = PLUGIN_FIELD.fullmatch(line)
+        if field and current_entry is not None:
+            current_entry[field.group(1)] = field.group(2).strip()
+
+    if current_entry is not None:
+        plugin_entries.append(current_entry)
+
+    pins: list[tuple[str, str, int]] = []
+    for entry in plugin_entries:
+        remote_text = entry.get("remote")
+        if remote_text is None:
+            continue
+        remote = REMOTE.fullmatch(remote_text)
+        if remote is None:
+            continue
+        revision_text = entry.get("revision")
+        if revision_text is None or REVISION.fullmatch(revision_text) is None:
+            raise SystemExit(f"generator {remote.group(1)} is missing a revision")
+        pins.append((remote.group(1), remote.group(2), int(revision_text)))
     if not pins:
         raise SystemExit("no pinned remote generators found")
     return pins
