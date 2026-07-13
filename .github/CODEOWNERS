@@ -1,0 +1,15 @@
+/proto/                       @wunderkennd
+/registry/                    @wunderkennd
+/conformance/                 @wunderkennd
+/scripts/                     @wunderkennd
+/tests/                       @wunderkennd
+/tools/                       @wunderkennd
+/Justfile                     @wunderkennd
+/README.md                    @wunderkennd
+/docs/                        @wunderkennd
+/buf.yaml                     @wunderkennd
+/buf.lock                     @wunderkennd
+/buf.gen.yaml                 @wunderkennd
+/.github/CODEOWNERS           @wunderkennd
+/.github/pull_request_template.md @wunderkennd
+/.github/workflows/           @wunderkennd

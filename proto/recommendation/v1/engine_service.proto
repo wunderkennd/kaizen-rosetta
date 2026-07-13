@@ -2,9 +2,9 @@ syntax = "proto3";
 
 package recommendation.v1;
 
-option go_package = "github.com/wunderkennd/personalization/gen/go/recommendation/v1";
-
 import "recommendation/v1/domain.proto";
+
+option go_package = "github.com/wunderkennd/personalization/gen/go/recommendation/v1";
 
 // RecommendationEngineService is the internal gRPC API for the Rust recommendation
 // engine sidecar. It runs co-located in the same Kubernetes pod as the Go

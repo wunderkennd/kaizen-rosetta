@@ -1,0 +1,17 @@
+{
+  "moduleCommit": "0123456789abcdef0123456789abcdef",
+  "verifications": [
+    {
+      "coordinate": "buf.build/gen/go/kaizen/rosetta/protocolbuffers/go",
+      "ecosystem": "go",
+      "evidence": "exact coordinate and version compiled in an isolated consumer",
+      "generator": "buf.build/protocolbuffers/go",
+      "moduleCommit": "0123456789abcdef0123456789abcdef",
+      "pluginRevision": 1,
+      "pluginVersion": "v1.36.11",
+      "status": "passed",
+      "usable": true,
+      "version": "v1.36.11-00000000000000-0123456789ab.1"
+    }
+  ]
+}

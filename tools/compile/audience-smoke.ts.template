@@ -1,0 +1,28 @@
+import { create } from "@bufbuild/protobuf";
+import { createClient, type Transport } from "@connectrpc/connect";
+import { AudienceAttributeProvenance, AudienceContextSchema } from "./kaizen/audience/v1/context_pb.js";
+import { AudienceValueSchema } from "./kaizen/audience/v1/value_pb.js";
+import { ExperimentManagementService } from "./experimentation/management/v1/management_service_pb.js";
+
+const value = create(AudienceValueSchema, {
+  kind: { case: "stringValue", value: "premium" },
+});
+const context = create(AudienceContextSchema, {
+  attributes: {
+    subscription_tier: {
+      value,
+      provenance: AudienceAttributeProvenance.OBSERVED,
+    },
+  },
+  registryVersion: "2026-07-12",
+});
+declare const transport: Transport;
+const client = createClient(ExperimentManagementService, transport);
+
+if (context.attributes.subscription_tier?.value?.kind.case !== "stringValue") {
+  throw new Error("typed audience smoke lost its value");
+}
+if (ExperimentManagementService.typeName !== "experimentation.management.v1.ExperimentManagementService") {
+  throw new Error("generated service descriptor is unavailable");
+}
+void client;

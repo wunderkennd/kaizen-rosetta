@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        # actions/checkout v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+
+      - name: Install Buf
+        # bufbuild/buf-setup-action v1.50.0
+        uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99
+        with:
+          version: 1.66.0
+
+      - name: Install just
+        # extractions/setup-just v4
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3
+        with:
+          just-version: 1.46.0
+
+      - name: Set up Python
+        # actions/setup-python v6.3.0
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.11"
+
+      - name: Set up Go
+        # actions/setup-go v6.5.0
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version: "1.26.1"
+
+      - name: Set up Node.js
+        # actions/setup-node v6.4.0
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: "25.2.1"
+
+      - name: Run deterministic checks and release-manifest builder fixtures
+        # This released commit is test input only. No candidate manifest is
+        # created until a release supplies the BSR commit returned by buf push.
+        env:
+          RELEASE_MANIFEST_TEST_BSR_COMMIT: 3d978f388d4242f3b3c8e663465b85fd
+        run: just check
+
+      - name: Generate contracts
+        run: just generate
+
+      - name: Compile generated Go and TypeScript contracts
+        run: just generated-contracts
+
+      - name: Run Python contract tests
+        run: just python-contracts
+
+      - name: Build descriptor and digest
+        run: just descriptor
+
+      - name: Check breaking changes
+        env:
+          BUF_TOKEN: ${{ secrets.BUF_TOKEN }}
+          BUF_BREAKING_AGAINST: buf.build/kaizen/rosetta
+        run: just breaking
+
+      - name: Upload descriptor artifacts
+        # actions/upload-artifact v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: rosetta-descriptor
+          path: |
+            dist/rosetta-descriptor.binpb
+            dist/rosetta-descriptor.sha256
+          if-no-files-found: error

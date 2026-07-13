@@ -1,0 +1,24 @@
+package compilecheck
+
+import (
+	"testing"
+
+	audiencev1 "github.com/wunderkennd/kaizen-rosetta/gen/go/kaizen/audience/v1"
+)
+
+func TestTypedAudienceSmoke(t *testing.T) {
+	value := &audiencev1.AudienceValue{
+		Kind: &audiencev1.AudienceValue_StringValue{StringValue: "premium"},
+	}
+	attribute := &audiencev1.AudienceAttribute{
+		Value: value,
+		Provenance: audiencev1.AudienceAttributeProvenance_AUDIENCE_ATTRIBUTE_PROVENANCE_OBSERVED,
+	}
+	context := &audiencev1.AudienceContext{
+		Attributes: map[string]*audiencev1.AudienceAttribute{"subscription_tier": attribute},
+		RegistryVersion: "2026-07-12",
+	}
+	if context.Attributes["subscription_tier"].GetValue().GetStringValue() != "premium" {
+		t.Fatal("typed audience smoke lost its value")
+	}
+}
