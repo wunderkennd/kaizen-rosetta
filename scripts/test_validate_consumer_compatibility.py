@@ -115,8 +115,132 @@ class ConsumerCompatibilityValidationTests(unittest.TestCase):
         self.assertIsNot(normalized, document["records"][0])  # type: ignore[index]
         self.assertIsNot(normalized["checks"], expected["checks"])
         self.assertIsNot(normalized["crateVersions"], expected["crateVersions"])
+        for identity in ("bsrModuleCommit", "descriptorSha256", "gitCommit"):
+            self.assertIs(type(normalized[identity]), str)
         document["records"][0]["checks"].append("late-mutation")  # type: ignore[index,union-attr]
         self.assertEqual(normalized["checks"], CHECKS)
+
+    def test_rejects_non_string_or_malformed_caller_bindings_even_when_evidence_matches(
+        self,
+    ) -> None:
+        cases = {
+            "BSR non-string": (
+                "bsrModuleCommit",
+                123,
+                "bsr_module_commit",
+                "expected BSR commit must be 32 lowercase hexadecimal characters",
+            ),
+            "BSR malformed": (
+                "bsrModuleCommit",
+                "A" * 32,
+                "bsr_module_commit",
+                "expected BSR commit must be 32 lowercase hexadecimal characters",
+            ),
+            "descriptor non-string": (
+                "descriptorSha256",
+                True,
+                "descriptor_sha256",
+                "expected descriptor SHA-256 must be 64 lowercase hexadecimal characters",
+            ),
+            "descriptor malformed": (
+                "descriptorSha256",
+                "A" * 64,
+                "descriptor_sha256",
+                "expected descriptor SHA-256 must be 64 lowercase hexadecimal characters",
+            ),
+            "Git non-string": (
+                "gitCommit",
+                [GIT_COMMIT],
+                "git_commit",
+                "expected Git commit must be 40 lowercase hexadecimal characters",
+            ),
+            "Git malformed": (
+                "gitCommit",
+                "g" * 40,
+                "git_commit",
+                "expected Git commit must be 40 lowercase hexadecimal characters",
+            ),
+        }
+
+        for name, (field, value, binding, error) in cases.items():
+            with self.subTest(name=name):
+                document = self.valid_document()
+                document["records"][0][field] = value  # type: ignore[index]
+                arguments: dict[str, object] = {
+                    "bsr_module_commit": BSR_MODULE_COMMIT,
+                    "descriptor_sha256": DESCRIPTOR_SHA256,
+                    "git_commit": GIT_COMMIT,
+                }
+                arguments[binding] = value
+                with self.assertRaisesRegex(ValueError, error):
+                    validate_document(
+                        document,
+                        cargo_lock_path=self.cargo_lock,
+                        **arguments,  # type: ignore[arg-type]
+                    )
+
+    def test_rejects_non_string_or_malformed_evidence_identities_before_equality(
+        self,
+    ) -> None:
+        cases = {
+            "BSR non-string": (
+                "bsrModuleCommit",
+                123,
+                "BSR commit must be 32 lowercase hexadecimal characters",
+            ),
+            "BSR malformed": (
+                "bsrModuleCommit",
+                "A" * 32,
+                "BSR commit must be 32 lowercase hexadecimal characters",
+            ),
+            "descriptor non-string": (
+                "descriptorSha256",
+                True,
+                "descriptor SHA-256 must be 64 lowercase hexadecimal characters",
+            ),
+            "descriptor malformed": (
+                "descriptorSha256",
+                "A" * 64,
+                "descriptor SHA-256 must be 64 lowercase hexadecimal characters",
+            ),
+            "Git non-string": (
+                "gitCommit",
+                [GIT_COMMIT],
+                "Git commit must be 40 lowercase hexadecimal characters",
+            ),
+            "Git malformed": (
+                "gitCommit",
+                "g" * 40,
+                "Git commit must be 40 lowercase hexadecimal characters",
+            ),
+            "lock digest non-string": (
+                "cargoLockSha256",
+                False,
+                "Cargo.lock digest must be 64 lowercase hexadecimal characters",
+            ),
+            "lock digest malformed": (
+                "cargoLockSha256",
+                "A" * 64,
+                "Cargo.lock digest must be 64 lowercase hexadecimal characters",
+            ),
+        }
+
+        for name, (field, value, error) in cases.items():
+            with self.subTest(name=name):
+                document = self.valid_document()
+                document["records"][0][field] = value  # type: ignore[index]
+                with self.assertRaisesRegex(ValueError, error):
+                    self.validate(document)
+
+    def test_rejects_non_path_cargo_lock_binding(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Cargo.lock path must be a Path"):
+            validate_document(
+                self.valid_document(),
+                bsr_module_commit=BSR_MODULE_COMMIT,
+                descriptor_sha256=DESCRIPTOR_SHA256,
+                git_commit=GIT_COMMIT,
+                cargo_lock_path=str(self.cargo_lock),  # type: ignore[arg-type]
+            )
 
     def test_cli_emits_only_deterministic_normalized_record_json(self) -> None:
         document = self.valid_document()
@@ -133,6 +257,16 @@ class ConsumerCompatibilityValidationTests(unittest.TestCase):
     def test_cli_rejects_malformed_json_without_a_traceback(self) -> None:
         evidence_path = Path(self.temporary_directory.name) / "evidence.json"
         evidence_path.write_text("{not-json\n", encoding="utf-8")
+
+        result = self.run_cli(evidence_path)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(result.stderr, "invalid consumer compatibility JSON\n")
+
+    def test_cli_rejects_recursive_json_without_a_traceback(self) -> None:
+        evidence_path = Path(self.temporary_directory.name) / "evidence.json"
+        evidence_path.write_text("[" * 2_000 + "0" + "]" * 2_000, encoding="utf-8")
 
         result = self.run_cli(evidence_path)
 

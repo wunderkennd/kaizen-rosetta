@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import re
 import sys
 
 
@@ -40,6 +41,15 @@ CRATE_VERSIONS = {
     "connectrpc": "0.7.0",
     "connectrpc-build": "0.7.0",
 }
+
+
+def _require_lowercase_hex(value: object, *, length: int, label: str) -> str:
+    error = f"{label} must be {length} lowercase hexadecimal characters"
+    if type(value) is not str:
+        raise ValueError(error)
+    if re.fullmatch(rf"[0-9a-f]{{{length}}}", value) is None:
+        raise ValueError(error)
+    return value
 
 
 def validate_document(
@@ -95,19 +105,59 @@ def validate_rust_evidence(
         raise ValueError("Rust evidence must be an object")
     if set(evidence) != RECORD_FIELDS:
         raise ValueError("Rust evidence fields mismatch")
+
+    normalized_bsr_module_commit = _require_lowercase_hex(
+        bsr_module_commit,
+        length=32,
+        label="expected BSR commit",
+    )
+    normalized_descriptor_sha256 = _require_lowercase_hex(
+        descriptor_sha256,
+        length=64,
+        label="expected descriptor SHA-256",
+    )
+    normalized_git_commit = _require_lowercase_hex(
+        git_commit,
+        length=40,
+        label="expected Git commit",
+    )
+    if not isinstance(cargo_lock_path, Path):
+        raise ValueError("Cargo.lock path must be a Path")
+
+    evidence_bsr_module_commit = _require_lowercase_hex(
+        evidence["bsrModuleCommit"],
+        length=32,
+        label="BSR commit",
+    )
+    evidence_descriptor_sha256 = _require_lowercase_hex(
+        evidence["descriptorSha256"],
+        length=64,
+        label="descriptor SHA-256",
+    )
+    evidence_git_commit = _require_lowercase_hex(
+        evidence["gitCommit"],
+        length=40,
+        label="Git commit",
+    )
+    evidence_cargo_lock_sha256 = _require_lowercase_hex(
+        evidence["cargoLockSha256"],
+        length=64,
+        label="Cargo.lock digest",
+    )
+
     if evidence["schema"] != "rosetta.consumer-compatibility.rust.v1":
         raise ValueError("record schema mismatch")
     if evidence["adapter"] != "connect-rust":
         raise ValueError("adapter mismatch")
     if evidence["bsrModule"] != "buf.build/kaizen/rosetta":
         raise ValueError("BSR module mismatch")
-    if evidence["bsrModuleCommit"] != bsr_module_commit:
+    if evidence_bsr_module_commit != normalized_bsr_module_commit:
         raise ValueError("BSR commit mismatch")
     if evidence["canary"] != "rust-contracts-v1":
         raise ValueError("canary mismatch")
 
     cargo_lock_sha256 = hashlib.sha256(cargo_lock_path.read_bytes()).hexdigest()
-    if evidence["cargoLockSha256"] != cargo_lock_sha256:
+    if evidence_cargo_lock_sha256 != cargo_lock_sha256:
         raise ValueError("Cargo.lock digest mismatch")
     if evidence["cargoVersion"] != "1.88.0":
         raise ValueError("Cargo version mismatch")
@@ -118,11 +168,11 @@ def validate_rust_evidence(
         or evidence["crateVersions"] != CRATE_VERSIONS
     ):
         raise ValueError("crate version mismatch")
-    if evidence["descriptorSha256"] != descriptor_sha256:
+    if evidence_descriptor_sha256 != normalized_descriptor_sha256:
         raise ValueError("descriptor mismatch")
     if evidence["generationMode"] != "cargo-build-rs-bsr-export":
         raise ValueError("generation mode mismatch")
-    if evidence["gitCommit"] != git_commit:
+    if evidence_git_commit != normalized_git_commit:
         raise ValueError("Git commit mismatch")
     if evidence["rustVersion"] != "1.88.0":
         raise ValueError("Rust version mismatch")
@@ -132,15 +182,15 @@ def validate_rust_evidence(
     return {
         "adapter": "connect-rust",
         "bsrModule": "buf.build/kaizen/rosetta",
-        "bsrModuleCommit": bsr_module_commit,
+        "bsrModuleCommit": normalized_bsr_module_commit,
         "canary": "rust-contracts-v1",
         "cargoLockSha256": cargo_lock_sha256,
         "cargoVersion": "1.88.0",
         "checks": list(CHECKS),
         "crateVersions": dict(CRATE_VERSIONS),
-        "descriptorSha256": descriptor_sha256,
+        "descriptorSha256": normalized_descriptor_sha256,
         "generationMode": "cargo-build-rs-bsr-export",
-        "gitCommit": git_commit,
+        "gitCommit": normalized_git_commit,
         "rustVersion": "1.88.0",
         "schema": "rosetta.consumer-compatibility.rust.v1",
         "status": "passed",
@@ -167,7 +217,7 @@ def main() -> int:
 
     try:
         document = json.loads(evidence_bytes)
-    except (json.JSONDecodeError, UnicodeDecodeError):
+    except (ValueError, RecursionError):
         print("invalid consumer compatibility JSON", file=sys.stderr)
         return 1
 
