@@ -155,6 +155,8 @@ by the Just recipe, verifies its descriptor digest, and runs the complete
 locked Connect-Rust canary in a temporary workspace. After the canary passes,
 it atomically writes `dist/consumer-compatibility-rust.json`; failed runs
 remove any stale evidence and do not publish a passing record.
+Production automation replaces the example Git commit and Cargo.lock hash
+slots with values from the successful canary output.
 
 ### Release manifests
 

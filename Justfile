@@ -71,5 +71,6 @@ check: tooling-sync
     "{{tooling-venv}}/bin/python" -m unittest scripts/test_compile_generated_sdks.py
     "{{tooling-venv}}/bin/python" -m unittest scripts/test_resolve_generated_sdks.py
     "{{tooling-venv}}/bin/python" -m unittest scripts/test_verify_rust_contracts.py
+    "{{tooling-venv}}/bin/python" -m unittest scripts/test_validate_consumer_compatibility.py
     "{{tooling-venv}}/bin/python" -m unittest scripts/test_build_release_manifest.py
     "{{tooling-venv}}/bin/python" -m unittest scripts/test_repository_governance.py
