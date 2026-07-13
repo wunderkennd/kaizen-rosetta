@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -326,6 +327,34 @@ class ReleaseManifestBuilderTests(unittest.TestCase):
         Path(environment["ROSETTA_RUST_COMPATIBILITY_FILE"]).write_text(
             json.dumps(document) + "\n"
         )
+
+    def install_fake_mktemp(self, directory: Path) -> Path:
+        real_mktemp = shutil.which("mktemp")
+        self.assertIsNotNone(real_mktemp)
+        fake_mktemp = directory / "bin/mktemp"
+        fake_mktemp.write_text(
+            f"""#!/usr/bin/env bash
+set -euo pipefail
+if [[ -n "${{FAKE_MKTEMP_COUNTER:-}}" ]]; then
+  count=0
+  if [[ -f "${{FAKE_MKTEMP_COUNTER}}" ]]; then
+    IFS= read -r count < "${{FAKE_MKTEMP_COUNTER}}"
+  fi
+  count="$((count + 1))"
+  printf '%s\\n' "${{count}}" > "${{FAKE_MKTEMP_COUNTER}}"
+  if [[ "${{count}}" == "${{FAKE_MKTEMP_FAIL_ON_CALL:-0}}" ]]; then
+    exit 86
+  fi
+fi
+path="$({shlex.quote(real_mktemp)} "$@")"
+if [[ -n "${{FAKE_MKTEMP_LOG:-}}" ]]; then
+  printf '%s\\n' "${{path}}" >> "${{FAKE_MKTEMP_LOG}}"
+fi
+printf '%s\\n' "${{path}}"
+"""
+        )
+        fake_mktemp.chmod(0o755)
+        return fake_mktemp
 
     def test_rejects_a_missing_bsr_module_commit(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -1268,10 +1297,34 @@ plugins:
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("generated SDK verification missing", result.stderr)
 
+    def test_cleans_manifest_temp_when_rust_temp_creation_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            _, environment = self.make_project(root)
+            self.install_fake_mktemp(root)
+            counter = root / "mktemp-count"
+            environment["FAKE_MKTEMP_COUNTER"] = str(counter)
+            environment["FAKE_MKTEMP_FAIL_ON_CALL"] = "2"
+            output = root / "dist/release-manifest.json"
+            original_output = b"existing manifest must survive\n"
+            output.write_bytes(original_output)
+
+            result = self.run_builder(root, environment)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(result.returncode, 86)
+            self.assertEqual(output.read_bytes(), original_output)
+            self.assertEqual(
+                list((root / "dist").glob("release-manifest.json.tmp.*")), []
+            )
+
     def test_concurrent_builders_use_unique_temporary_files_and_clean_up(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             _, environment = self.make_project(root)
+            self.install_fake_mktemp(root)
+            mktemp_log = root / "mktemp-paths"
+            environment["FAKE_MKTEMP_LOG"] = str(mktemp_log)
             processes = [
                 subprocess.Popen(
                     [str(root / "scripts/build_release_manifest.sh")],
@@ -1294,6 +1347,13 @@ plugins:
                 manifest["consumerCompatibility"]["rust"]["bsrModuleCommit"],
                 BASELINE_BSR_MODULE_COMMIT,
             )
+            rust_temp_paths = [
+                path
+                for path in mktemp_log.read_text().splitlines()
+                if ".rust." in Path(path).name
+            ]
+            self.assertEqual(len(rust_temp_paths), 4)
+            self.assertEqual(len(set(rust_temp_paths)), 4)
             self.assertEqual(
                 list((root / "dist").glob("release-manifest.json.tmp.*")), []
             )

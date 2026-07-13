@@ -478,6 +478,8 @@ printf '%s\\n' '{"b" * 40}'
             "65 characters": "b" * 65,
             "nonhex SHA-1": "g" * 40,
             "nonhex SHA-256": "g" * 64,
+            "uppercase SHA-1": "A" * 40,
+            "uppercase SHA-256": "A" * 64,
         }.items():
             with self.subTest(name=name):
                 with tempfile.TemporaryDirectory() as temporary_directory:

@@ -130,10 +130,12 @@ fi
 
 mkdir -p "${root}/dist"
 manifest_output="${root}/dist/release-manifest.json"
-temporary_output="$(mktemp "${manifest_output}.tmp.XXXXXX")"
+temporary_output=""
 temporary_sdk_metadata=""
-temporary_rust_evidence="$(mktemp "${manifest_output}.rust.XXXXXX")"
+temporary_rust_evidence=""
 trap 'rm -f -- "${temporary_output}" "${temporary_sdk_metadata}" "${temporary_rust_evidence}"' EXIT
+temporary_output="$(mktemp "${manifest_output}.tmp.XXXXXX")"
+temporary_rust_evidence="$(mktemp "${manifest_output}.rust.XXXXXX")"
 python3 "${root}/scripts/validate_consumer_compatibility.py" \
   --evidence "${ROSETTA_RUST_COMPATIBILITY_FILE}" \
   --bsr-module-commit "${BSR_MODULE_COMMIT}" \
