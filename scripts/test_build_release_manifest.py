@@ -195,6 +195,7 @@ class ReleaseManifestBuilderTests(unittest.TestCase):
         (directory / "buf.gen.yaml").write_text(buf_gen)
         (directory / "buf.yaml").write_text("version: v2\n")
         (directory / "buf.lock").write_text("# fixture lock\n")
+        shutil.copy2(ROOT / "rust-toolchain.toml", directory)
         (directory / "Justfile").write_text("check:\n    true\n")
         (directory / "README.md").write_text("# Release fixture\n")
         docs = directory / "docs"
@@ -592,6 +593,7 @@ printf '%s\\n' "${{path}}"
 
     def test_rejects_dirty_tracked_rust_certification_sources(self) -> None:
         source_paths = (
+            "rust-toolchain.toml",
             "tools/compatibility/rust/build.rs",
             "scripts/validate_consumer_compatibility.py",
             "scripts/verify_rust_contracts.sh",

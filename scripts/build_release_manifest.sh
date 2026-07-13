@@ -107,6 +107,7 @@ release_source_paths=(
   "scripts/"
   "tests/"
   "tools/"
+  "rust-toolchain.toml"
   "Justfile"
   "README.md"
   "docs/"
