@@ -105,8 +105,8 @@ async def exercise_generated_connect_asgi(
     service = StaticWorkbenchService()
     application = PageWorkbenchServiceASGIApplication(service)
     client = PageWorkbenchServiceClient("http://testserver")
-    assert isinstance(client, PageWorkbenchServiceClient)
     try:
+        assert isinstance(client, PageWorkbenchServiceClient)
         return await invoke_asgi(application, MessageToJson(request).encode())
     finally:
         await client.close()
