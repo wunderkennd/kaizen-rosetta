@@ -33,7 +33,7 @@ The experimentation platform is a highly modular, multi-service system written i
 
 ---
 
-## 2. kaizen-accelerator (formerly personalization-services4j)
+## 2. kaizen-accelerator
 
 The personalization service provides real-time user-targeted recommendation pages by orchestrating candidate generation, ranking, and profile features.
 
