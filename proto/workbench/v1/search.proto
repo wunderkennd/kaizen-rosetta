@@ -1,0 +1,493 @@
+syntax = "proto3";
+
+package workbench.v1;
+
+import "buf/validate/validate.proto";
+import "kaizen/audience/v1/context.proto";
+import "workbench/v1/workbench.proto";
+
+enum SearchScope {
+  SEARCH_SCOPE_UNSPECIFIED = 0;
+  SEARCH_SCOPE_TITLE = 1;
+  SEARCH_SCOPE_EPISODE = 2;
+}
+
+enum RetrievalLane {
+  RETRIEVAL_LANE_UNSPECIFIED = 0;
+  RETRIEVAL_LANE_LEXICAL = 1;
+  RETRIEVAL_LANE_SEMANTIC = 2;
+}
+
+enum ExactMatchClass {
+  EXACT_MATCH_CLASS_UNSPECIFIED = 0;
+  EXACT_MATCH_CLASS_NONE = 1;
+  EXACT_MATCH_CLASS_CANONICAL_EXACT = 2;
+  EXACT_MATCH_CLASS_ALIAS_EXACT = 3;
+  EXACT_MATCH_CLASS_PREFIX = 4;
+}
+
+enum MatchedField {
+  MATCHED_FIELD_UNSPECIFIED = 0;
+  MATCHED_FIELD_CANONICAL_TITLE = 1;
+  MATCHED_FIELD_ALIAS = 2;
+  MATCHED_FIELD_DESCRIPTION = 3;
+}
+
+enum SearchStatus {
+  SEARCH_STATUS_UNSPECIFIED = 0;
+  SEARCH_STATUS_OK = 1;
+  SEARCH_STATUS_EMPTY = 2;
+  SEARCH_STATUS_TIMEOUT = 3;
+  SEARCH_STATUS_UNAVAILABLE = 4;
+  SEARCH_STATUS_INVALID_RESPONSE = 5;
+  SEARCH_STATUS_CAPACITY_EXHAUSTED = 6;
+  SEARCH_STATUS_PERMISSION_DENIED = 7;
+  SEARCH_STATUS_CONFIGURATION_ERROR = 8;
+  SEARCH_STATUS_DEGRADED = 9;
+}
+
+enum SourceMode {
+  SOURCE_MODE_UNSPECIFIED = 0;
+  SOURCE_MODE_PRIMARY = 1;
+  SOURCE_MODE_SHADOW = 2;
+}
+
+enum RoutingMode {
+  ROUTING_MODE_UNSPECIFIED = 0;
+  ROUTING_MODE_DISABLED = 1;
+  ROUTING_MODE_HEURISTIC = 2;
+  ROUTING_MODE_MODEL_SHADOW = 3;
+  ROUTING_MODE_MODEL_ACTIVE = 4;
+}
+
+enum LanguageHint {
+  LANGUAGE_HINT_UNSPECIFIED = 0;
+  LANGUAGE_HINT_UNKNOWN = 1;
+  LANGUAGE_HINT_ENGLISH = 2;
+  LANGUAGE_HINT_JAPANESE = 3;
+  LANGUAGE_HINT_OTHER = 4;
+}
+
+enum ScriptHint {
+  SCRIPT_HINT_UNSPECIFIED = 0;
+  SCRIPT_HINT_UNKNOWN = 1;
+  SCRIPT_HINT_LATIN = 2;
+  SCRIPT_HINT_JAPANESE = 3;
+  SCRIPT_HINT_MIXED = 4;
+  SCRIPT_HINT_OTHER = 5;
+}
+
+enum RomajiHint {
+  ROMAJI_HINT_UNSPECIFIED = 0;
+  ROMAJI_HINT_UNKNOWN = 1;
+  ROMAJI_HINT_UNLIKELY = 2;
+  ROMAJI_HINT_POSSIBLE = 3;
+  ROMAJI_HINT_LIKELY = 4;
+}
+
+enum ConfidenceBand {
+  CONFIDENCE_BAND_UNSPECIFIED = 0;
+  CONFIDENCE_BAND_UNKNOWN = 1;
+  CONFIDENCE_BAND_LOW = 2;
+  CONFIDENCE_BAND_MEDIUM = 3;
+  CONFIDENCE_BAND_HIGH = 4;
+}
+
+enum RoutingReasonCode {
+  ROUTING_REASON_CODE_UNSPECIFIED = 0;
+  ROUTING_REASON_CODE_BALANCED_DEFAULT = 1;
+  ROUTING_REASON_CODE_ANALYZER_FAILURE = 2;
+  ROUTING_REASON_CODE_CANONICAL_EXACT = 3;
+  ROUTING_REASON_CODE_ALIAS_EXACT = 4;
+  ROUTING_REASON_CODE_DESCRIPTIVE_QUERY = 5;
+  ROUTING_REASON_CODE_ROMAJI_OR_MIXED_SCRIPT = 6;
+  ROUTING_REASON_CODE_SINGLE_HEALTHY_LANE = 7;
+  ROUTING_REASON_CODE_LOW_CONFIDENCE = 8;
+  ROUTING_REASON_CODE_MODEL_SHADOW_ONLY = 9;
+  ROUTING_REASON_CODE_MODEL_ACTIVE = 10;
+}
+
+enum SearchWarningCode {
+  SEARCH_WARNING_CODE_UNSPECIFIED = 0;
+  SEARCH_WARNING_CODE_LEXICAL_TIMEOUT = 1;
+  SEARCH_WARNING_CODE_LEXICAL_UNAVAILABLE = 2;
+  SEARCH_WARNING_CODE_LEXICAL_INVALID_RESPONSE = 3;
+  SEARCH_WARNING_CODE_LEXICAL_CAPACITY = 4;
+  SEARCH_WARNING_CODE_SEMANTIC_TIMEOUT = 5;
+  SEARCH_WARNING_CODE_SEMANTIC_UNAVAILABLE = 6;
+  SEARCH_WARNING_CODE_SEMANTIC_INVALID_RESPONSE = 7;
+  SEARCH_WARNING_CODE_SEMANTIC_CAPACITY = 8;
+  SEARCH_WARNING_CODE_ROUTING_FALLBACK = 9;
+  SEARCH_WARNING_CODE_MALFORMED_CANDIDATE_DROPPED = 10;
+  SEARCH_WARNING_CODE_PARTIAL_EPISODE_RESULTS = 11;
+}
+
+message SearchTitlesRequest {
+  option (buf.validate.message).cel = {
+    id: "search_titles_request.title_forbids_parent"
+    message: "parent_title_id is not allowed for title search"
+    expression: "this.scope != 1 || !has(this.parent_title_id)"
+  };
+
+  string query = 1 [(buf.validate.field).string = {
+    min_bytes: 1
+    max_bytes: 512
+    pattern: "\\S"
+  }];
+  SearchScope scope = 2 [(buf.validate.field).enum = {
+    defined_only: true
+    not_in: 0
+  }];
+  kaizen.audience.v1.AudienceContext audience_context = 3 [(buf.validate.field).required = true];
+  uint32 limit = 4 [(buf.validate.field).uint32 = {
+    gte: 1
+    lte: 50
+  }];
+  string request_id = 5 [(buf.validate.field).string.max_bytes = 128];
+  optional string parent_title_id = 6 [(buf.validate.field).string = {
+    min_bytes: 1
+    max_bytes: 256
+    pattern: "\\S"
+  }];
+}
+
+message TitleSearchDetail {
+  bool episode_details_available = 1;
+}
+
+message EpisodeSearchDetail {
+  string parent_title_id = 1 [(buf.validate.field).string = {
+    min_bytes: 1
+    max_bytes: 256
+    pattern: "\\S"
+  }];
+  string season_display = 2 [(buf.validate.field).string.max_bytes = 128];
+  string episode_display = 3 [(buf.validate.field).string.max_bytes = 128];
+}
+
+message RetrievalContribution {
+  RetrievalLane lane = 1 [(buf.validate.field).enum = {
+    defined_only: true
+    not_in: 0
+  }];
+  uint32 rank = 2 [(buf.validate.field).uint32 = {
+    gte: 1
+    lte: 1000
+  }];
+}
+
+message AudienceFilterProvenance {
+  string policy_id = 1 [(buf.validate.field).string = {
+    min_bytes: 1
+    max_bytes: 128
+  }];
+  string policy_version = 2 [(buf.validate.field).string = {
+    min_bytes: 1
+    max_bytes: 64
+  }];
+  string registry_version = 3 [(buf.validate.field).string = {
+    min_bytes: 1
+    max_bytes: 64
+  }];
+}
+
+message SearchResult {
+  option (buf.validate.message).cel = {
+    id: "search_result.detail_matches_resource_kind"
+    message: "result detail must match resource kind"
+    expression: "(has(this.title) && (this.resource_kind == 1 || this.resource_kind == 2)) || (has(this.episode) && this.resource_kind == 3)"
+  };
+
+  string resource_id = 1 [(buf.validate.field).string = {
+    min_bytes: 1
+    max_bytes: 256
+    pattern: "\\S"
+  }];
+  ResourceKind resource_kind = 2 [(buf.validate.field).enum = {
+    defined_only: true
+    not_in: 0
+  }];
+  oneof detail {
+    option (buf.validate.oneof).required = true;
+    TitleSearchDetail title = 3;
+    EpisodeSearchDetail episode = 4;
+  }
+  string display_title = 5 [(buf.validate.field).string = {
+    min_bytes: 1
+    max_bytes: 512
+    pattern: "\\S"
+  }];
+  string description = 6 [(buf.validate.field).string.max_bytes = 2048];
+  string image_url = 7 [(buf.validate.field).string.max_bytes = 2048];
+  uint32 final_rank = 8 [(buf.validate.field).uint32 = {
+    gte: 1
+    lte: 50
+  }];
+  double fused_score = 9 [(buf.validate.field).double = {
+    gte: 0
+    finite: true
+  }];
+  ExactMatchClass exact_match_class = 10 [(buf.validate.field).enum = {
+    defined_only: true
+    not_in: 0
+  }];
+  repeated RetrievalContribution contributions = 11 [
+    (buf.validate.field).repeated = {max_items: 2},
+    (buf.validate.field).cel = {
+      id: "search_result.unique_contribution_lanes"
+      message: "retrieval contribution lanes must be unique"
+      expression: "this.map(contribution, contribution.lane).unique()"
+    }
+  ];
+  repeated MatchedField matched_fields = 12 [(buf.validate.field).repeated = {
+    max_items: 3
+    unique: true
+    items: {
+      enum: {
+        defined_only: true
+        not_in: 0
+      }
+    }
+  }];
+  AudienceFilterProvenance audience = 13 [(buf.validate.field).required = true];
+}
+
+message RoutingManifest {
+  option (buf.validate.message).cel = {
+    id: "routing_manifest.normalized_weights"
+    message: "routing weights must sum to one"
+    expression: "this.lexical_weight + this.semantic_weight >= 0.999999999 && this.lexical_weight + this.semantic_weight <= 1.000000001"
+  };
+  option (buf.validate.message).cel = {
+    id: "routing_manifest.model_identity_presence_agrees"
+    message: "model ID and version must both be present or absent"
+    expression: "has(this.model_id) == has(this.model_version)"
+  };
+  option (buf.validate.message).cel = {
+    id: "routing_manifest.model_identity_matches_mode"
+    message: "model identity is required only for model routing modes"
+    expression: "((this.mode == 3 || this.mode == 4) && has(this.model_id)) || ((this.mode != 3 && this.mode != 4) && !has(this.model_id))"
+  };
+
+  RoutingMode mode = 1 [(buf.validate.field).enum = {
+    defined_only: true
+    not_in: 0
+  }];
+  string policy_id = 2 [(buf.validate.field).string = {
+    min_bytes: 1
+    max_bytes: 128
+    pattern: "\\S"
+  }];
+  string policy_version = 3 [(buf.validate.field).string = {
+    min_bytes: 1
+    max_bytes: 64
+    pattern: "\\S"
+  }];
+  optional string model_id = 4 [(buf.validate.field).string = {
+    min_bytes: 1
+    max_bytes: 128
+    pattern: "\\S"
+  }];
+  optional string model_version = 5 [(buf.validate.field).string = {
+    min_bytes: 1
+    max_bytes: 64
+    pattern: "\\S"
+  }];
+  LanguageHint language_hint = 6 [(buf.validate.field).enum = {
+    defined_only: true
+    not_in: 0
+  }];
+  ScriptHint script_hint = 7 [(buf.validate.field).enum = {
+    defined_only: true
+    not_in: 0
+  }];
+  RomajiHint romaji_hint = 8 [(buf.validate.field).enum = {
+    defined_only: true
+    not_in: 0
+  }];
+  ConfidenceBand confidence_band = 9 [(buf.validate.field).enum = {
+    defined_only: true
+    not_in: 0
+  }];
+  double lexical_weight = 10 [(buf.validate.field).double = {
+    gte: 0
+    lte: 1
+    finite: true
+  }];
+  double semantic_weight = 11 [(buf.validate.field).double = {
+    gte: 0
+    lte: 1
+    finite: true
+  }];
+  bool fallback = 12;
+  repeated RoutingReasonCode reason_codes = 13 [(buf.validate.field).repeated = {
+    max_items: 10
+    unique: true
+    items: {
+      enum: {
+        defined_only: true
+        not_in: 0
+      }
+    }
+  }];
+}
+
+message SourceManifest {
+  string logical_source_id = 1 [(buf.validate.field).string = {
+    min_bytes: 1
+    max_bytes: 128
+    pattern: "\\S"
+  }];
+  string logical_source_version = 2 [(buf.validate.field).string = {
+    min_bytes: 1
+    max_bytes: 64
+    pattern: "\\S"
+  }];
+  string document_manifest_version = 3 [(buf.validate.field).string = {
+    min_bytes: 1
+    max_bytes: 128
+    pattern: "\\S"
+  }];
+  string manifest_build_id = 4 [(buf.validate.field).string = {
+    min_bytes: 1
+    max_bytes: 128
+    pattern: "\\S"
+  }];
+  SourceMode mode = 5 [(buf.validate.field).enum = {
+    defined_only: true
+    not_in: 0
+  }];
+}
+
+message LaneManifest {
+  RetrievalLane lane = 1 [(buf.validate.field).enum = {
+    defined_only: true
+    not_in: 0
+  }];
+  SearchStatus status = 2 [(buf.validate.field).enum = {
+    defined_only: true
+    not_in: 0
+  }];
+  uint32 candidate_count = 3 [(buf.validate.field).uint32.lte = 1000];
+}
+
+message SearchSourceManifest {
+  SourceManifest source = 1 [(buf.validate.field).required = true];
+  repeated LaneManifest lanes = 2 [
+    (buf.validate.field).repeated = {
+      min_items: 2
+      max_items: 2
+    },
+    (buf.validate.field).cel = {
+      id: "search_source_manifest.unique_lanes"
+      message: "source manifest lanes must be unique"
+      expression: "this.map(lane, lane.lane).unique()"
+    }
+  ];
+}
+
+message SearchWarning {
+  SearchWarningCode code = 1 [(buf.validate.field).enum = {
+    defined_only: true
+    not_in: 0
+  }];
+  string message = 2 [(buf.validate.field).string = {
+    min_bytes: 1
+    max_bytes: 256
+    pattern: "\\S"
+  }];
+}
+
+message SearchTitlesResponse {
+  option (buf.validate.message).cel = {
+    id: "search_titles_response.unique_final_ranks"
+    message: "final ranks must be unique"
+    expression: "this.results.map(result, result.final_rank).unique()"
+  };
+  option (buf.validate.message).cel = {
+    id: "search_titles_response.contiguous_final_ranks"
+    message: "final ranks must be contiguous from one"
+    expression: "this.results.all(result, result.final_rank <= uint(this.results.size()))"
+  };
+
+  string contract_version = 1 [(buf.validate.field).string = {
+    min_bytes: 1
+    max_bytes: 64
+    pattern: "\\S"
+  }];
+  repeated SearchResult results = 2 [(buf.validate.field).repeated = {max_items: 50}];
+  RoutingManifest routing = 3 [(buf.validate.field).required = true];
+  SearchSourceManifest source = 4 [(buf.validate.field).required = true];
+  repeated SearchWarning warnings = 5 [(buf.validate.field).repeated = {max_items: 20}];
+  string correlation_id = 6 [(buf.validate.field).string = {
+    min_bytes: 1
+    max_bytes: 128
+    pattern: "\\S"
+  }];
+}
+
+message EpisodeResource {
+  string resource_id = 1 [(buf.validate.field).string = {
+    min_bytes: 1
+    max_bytes: 256
+    pattern: "\\S"
+  }];
+  string parent_title_id = 2 [(buf.validate.field).string = {
+    min_bytes: 1
+    max_bytes: 256
+    pattern: "\\S"
+  }];
+  ResourceKind resource_kind = 3 [(buf.validate.field).enum = {
+    defined_only: true
+    not_in: 0
+  }];
+  string display_title = 4 [(buf.validate.field).string = {
+    min_bytes: 1
+    max_bytes: 512
+    pattern: "\\S"
+  }];
+  string season_display = 5 [(buf.validate.field).string.max_bytes = 128];
+  string episode_display = 6 [(buf.validate.field).string.max_bytes = 128];
+  string image_url = 7 [(buf.validate.field).string.max_bytes = 2048];
+  uint32 season_order = 8;
+  uint32 episode_order = 9;
+  uint64 release_order = 10;
+}
+
+message ListTitleEpisodesRequest {
+  string parent_title_id = 1 [(buf.validate.field).string = {
+    min_bytes: 1
+    max_bytes: 256
+    pattern: "\\S"
+  }];
+  kaizen.audience.v1.AudienceContext audience_context = 2 [(buf.validate.field).required = true];
+  uint32 page_size = 3 [(buf.validate.field).uint32 = {
+    gte: 1
+    lte: 100
+  }];
+  string page_token = 4 [(buf.validate.field).string.max_bytes = 2048];
+  string request_id = 5 [(buf.validate.field).string.max_bytes = 128];
+}
+
+message ListTitleEpisodesResponse {
+  string contract_version = 1 [(buf.validate.field).string = {
+    min_bytes: 1
+    max_bytes: 64
+  }];
+  repeated EpisodeResource episodes = 2 [(buf.validate.field).repeated.max_items = 100];
+  string next_page_token = 3 [(buf.validate.field).string.max_bytes = 2048];
+  SearchStatus repository_status = 4 [(buf.validate.field).enum = {
+    defined_only: true
+    not_in: 0
+  }];
+  repeated SearchWarning warnings = 5 [(buf.validate.field).repeated.max_items = 20];
+  string correlation_id = 6 [(buf.validate.field).string = {
+    min_bytes: 1
+    max_bytes: 128
+  }];
+}
+
+service WorkbenchSearchService {
+  rpc SearchTitles(SearchTitlesRequest) returns (SearchTitlesResponse);
+  rpc ListTitleEpisodes(ListTitleEpisodesRequest) returns (ListTitleEpisodesResponse);
+}
