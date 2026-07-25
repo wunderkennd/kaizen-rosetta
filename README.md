@@ -15,6 +15,7 @@ For comprehensive diagrams and architecture breakdowns:
 - **[Ecosystem Architecture Overview](docs/architecture_overview.md)**: Details system topologies, core value loops, and the global Mermaid topology.
 - **[Repository & Component Deep Dive](docs/component_deep_dive.md)**: Breaks down the capabilities of `kaizen-experimentation`, `kaizen-accelerator`, `merchandising-apis`, `ATOM Curator Suite`, and `kaizen-rosetta`.
 - **[Integration Flows & Message Contracts](docs/integration_flows.md)**: Outlines end-to-end sequence charts for curation campaigns, personalized page serving, and telemetry analytics loops.
+- **[Workbench Search v1 Contract](docs/workbench_search_v1.md)**: Defines the governed title-first search and explicit episode-expansion transport boundary.
 
 ---
 
@@ -41,6 +42,10 @@ kaizen-rosetta/
     │   ├── domain.proto           # Recommendations slates & item specifications
     │   ├── engine_service.proto   # Candidate re-ranking engine gRPC interface
     │   └── service.proto          # PageRecommendationService client/server interfaces
+    │
+    ├── workbench/v1/              # Preview and provider-neutral search contracts
+    │   ├── workbench.proto        # PageWorkbenchService preview transport
+    │   └── search.proto           # WorkbenchSearchService search and episode expansion
     │
     └── kaizen/
         ├── audience/v1/           # Neutral typed audience contracts and diagnostics
@@ -107,6 +112,12 @@ The gate pins Go 1.26.1, Node.js 25.2.1, npm 11.6.2, TypeScript 5.9.3,
 `@bufbuild/protobuf` 2.12.1 with `@connectrpc/connect` 2.1.2. It never writes `go.mod`, `node_modules`, or
 compiler artifacts into `gen/` or the repository.
 
+The generated Workbench surface contains two independent services:
+`workbench.v1.PageWorkbenchService` for page preview and
+`workbench.v1.WorkbenchSearchService` for title search and explicit episode
+expansion. Their ownership and compatibility boundary is documented in
+[`docs/workbench_search_v1.md`](docs/workbench_search_v1.md).
+
 ---
 
 ## Generated Target SDKs
@@ -125,6 +136,13 @@ compiler artifacts into `gen/` or the repository.
    - Package Target: Google Protobuf messages, type stubs, and ConnectRPC services.
    - Generated using `buf.build/protocolbuffers/python`, `buf.build/protocolbuffers/pyi`, and `buf.build/connectrpc/py`.
    - Verified by the Python generated-contract smoke tests.
+
+All three generated targets include the `PageWorkbenchService` and
+`WorkbenchSearchService` messages and ConnectRPC service surfaces. Go and
+TypeScript compile fixtures reference both Workbench search methods, while the
+Python contract suite validates both generated ASGI routes and client
+lifecycle. See [`docs/workbench_search_v1.md`](docs/workbench_search_v1.md) for
+the certified compatibility matrix.
 
 Java is not currently a generated or tested Rosetta SDK target. Add it only
 after pinning a Java generator and adding a Java compilation test.
