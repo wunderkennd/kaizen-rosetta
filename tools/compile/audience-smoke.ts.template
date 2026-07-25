@@ -3,6 +3,12 @@ import { createClient, type Transport } from "@connectrpc/connect";
 import { AudienceAttributeProvenance, AudienceContextSchema } from "./kaizen/audience/v1/context_pb.js";
 import { AudienceValueSchema } from "./kaizen/audience/v1/value_pb.js";
 import { ExperimentManagementService } from "./experimentation/management/v1/management_service_pb.js";
+import {
+  SearchScope,
+  SearchTitlesRequestSchema,
+  SearchTitlesResponseSchema,
+  WorkbenchSearchService,
+} from "./workbench/v1/search_pb.js";
 
 const value = create(AudienceValueSchema, {
   kind: { case: "stringValue", value: "premium" },
@@ -18,6 +24,15 @@ const context = create(AudienceContextSchema, {
 });
 declare const transport: Transport;
 const client = createClient(ExperimentManagementService, transport);
+const searchRequest = create(SearchTitlesRequestSchema, {
+  query: "fullmetal",
+  scope: SearchScope.TITLE,
+  audienceContext: context,
+  limit: 20,
+});
+const searchResponse = create(SearchTitlesResponseSchema);
+const searchTitlesMethod = WorkbenchSearchService.method.searchTitles;
+const listTitleEpisodesMethod = WorkbenchSearchService.method.listTitleEpisodes;
 
 if (context.attributes.subscription_tier?.value?.kind.case !== "stringValue") {
   throw new Error("typed audience smoke lost its value");
@@ -25,4 +40,12 @@ if (context.attributes.subscription_tier?.value?.kind.case !== "stringValue") {
 if (ExperimentManagementService.typeName !== "experimentation.management.v1.ExperimentManagementService") {
   throw new Error("generated service descriptor is unavailable");
 }
+if (WorkbenchSearchService.typeName !== "workbench.v1.WorkbenchSearchService") {
+  throw new Error("generated Workbench search service descriptor is unavailable");
+}
+if (searchTitlesMethod.name !== "SearchTitles" || listTitleEpisodesMethod.name !== "ListTitleEpisodes") {
+  throw new Error("generated Workbench search method descriptors are unavailable");
+}
+void searchRequest;
+void searchResponse;
 void client;

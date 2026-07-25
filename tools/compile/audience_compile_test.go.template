@@ -4,7 +4,17 @@ import (
 	"testing"
 
 	audiencev1 "github.com/wunderkennd/kaizen-rosetta/gen/go/kaizen/audience/v1"
+	workbenchv1 "github.com/wunderkennd/kaizen-rosetta/gen/go/workbench/v1"
+	workbenchv1connect "github.com/wunderkennd/kaizen-rosetta/gen/go/workbench/v1/workbenchv1connect"
 )
+
+var _ = &workbenchv1.SearchTitlesRequest{
+	Query: "fullmetal",
+	Scope: workbenchv1.SearchScope_SEARCH_SCOPE_TITLE,
+	Limit: 20,
+}
+
+var _ workbenchv1connect.WorkbenchSearchServiceClient
 
 func TestTypedAudienceSmoke(t *testing.T) {
 	value := &audiencev1.AudienceValue{
