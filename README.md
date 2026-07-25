@@ -138,11 +138,14 @@ expansion. Their ownership and compatibility boundary is documented in
    - Verified by the Python generated-contract smoke tests.
 
 All three generated targets include the `PageWorkbenchService` and
-`WorkbenchSearchService` messages and ConnectRPC service surfaces. Go and
-TypeScript compile fixtures reference both Workbench search methods, while the
-Python contract suite validates both generated ASGI routes and client
-lifecycle. See [`docs/workbench_search_v1.md`](docs/workbench_search_v1.md) for
-the certified compatibility matrix.
+`WorkbenchSearchService` messages and ConnectRPC service surfaces. The Go
+fixture constructs a typed search request and type-checks the complete
+`WorkbenchSearchServiceClient` interface. The TypeScript fixture constructs
+request/response messages and directly references both search method
+descriptors. The Python contract suite validates both generated ASGI routes
+and client lifecycle. See
+[`docs/workbench_search_v1.md`](docs/workbench_search_v1.md) for the certified
+compatibility matrix.
 
 Java is not currently a generated or tested Rosetta SDK target. Add it only
 after pinning a Java generator and adding a Java compilation test.
