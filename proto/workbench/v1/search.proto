@@ -180,14 +180,17 @@ message AudienceFilterProvenance {
   string policy_id = 1 [(buf.validate.field).string = {
     min_bytes: 1
     max_bytes: 128
+    pattern: "\\S"
   }];
   string policy_version = 2 [(buf.validate.field).string = {
     min_bytes: 1
     max_bytes: 64
+    pattern: "\\S"
   }];
   string registry_version = 3 [(buf.validate.field).string = {
     min_bytes: 1
     max_bytes: 64
+    pattern: "\\S"
   }];
 }
 
@@ -427,6 +430,12 @@ message SearchTitlesResponse {
 }
 
 message EpisodeResource {
+  option (buf.validate.message).cel = {
+    id: "episode_resource.episode_kind"
+    message: "episode resources must use the episode resource kind"
+    expression: "this.resource_kind == 3"
+  };
+
   string resource_id = 1 [(buf.validate.field).string = {
     min_bytes: 1
     max_bytes: 256

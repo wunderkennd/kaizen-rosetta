@@ -44,6 +44,7 @@ from workbench.v1.search_pb2 import (
 )
 from workbench.v1.workbench_pb2 import (
     RESOURCE_KIND_EPISODE,
+    RESOURCE_KIND_MOVIE,
     RESOURCE_KIND_SERIES,
 )
 
@@ -54,7 +55,7 @@ EPISODES_PATH = "/workbench.v1.WorkbenchSearchService/ListTitleEpisodes"
 
 
 def audience_context() -> AudienceContext:
-    return AudienceContext(registry_version="2026-07-24")
+    return AudienceContext(registry_version="2026-07-12")
 
 
 def title_request(**changes: Any) -> SearchTitlesRequest:
@@ -146,7 +147,7 @@ def search_result(
         audience=AudienceFilterProvenance(
             policy_id="audience-policy",
             policy_version="1",
-            registry_version="2026-07-24",
+            registry_version="2026-07-12",
         ),
     )
 
@@ -159,7 +160,7 @@ def title_response(
     return SearchTitlesResponse(
         contract_version="workbench.v1",
         results=[search_result()] if results is None else results,
-        routing=routing or routing_manifest(),
+        routing=routing if routing is not None else routing_manifest(),
         source=source_manifest(),
         correlation_id="request-1",
     )
@@ -202,14 +203,14 @@ class StaticWorkbenchSearchService(WorkbenchSearchService):
         self, request: SearchTitlesRequest, ctx: Any
     ) -> SearchTitlesResponse:
         assert request.query == "Frieren"
-        assert request.audience_context.registry_version == "2026-07-24"
+        assert request.audience_context.registry_version == "2026-07-12"
         return title_response()
 
     async def list_title_episodes(
         self, request: ListTitleEpisodesRequest, ctx: Any
     ) -> ListTitleEpisodesResponse:
         assert request.parent_title_id == "series-1"
-        assert request.audience_context.registry_version == "2026-07-24"
+        assert request.audience_context.registry_version == "2026-07-12"
         return episode_response()
 
 
@@ -319,6 +320,43 @@ def test_search_result_requires_matching_detail() -> None:
     result = search_result()
     result.ClearField("title")
     assert_invalid(result)
+
+
+def test_episode_resource_with_episode_kind_is_valid() -> None:
+    VALIDATOR.validate(episode_resource())
+
+
+@pytest.mark.parametrize(
+    "resource_kind",
+    [RESOURCE_KIND_SERIES, RESOURCE_KIND_MOVIE],
+)
+def test_episode_resource_rejects_non_episode_kind(resource_kind: int) -> None:
+    resource = episode_resource()
+    resource.resource_kind = resource_kind
+    assert_invalid(resource)
+
+
+def test_nonblank_audience_filter_provenance_is_valid() -> None:
+    VALIDATOR.validate(search_result().audience)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    [
+        ("policy_id", ""),
+        ("policy_id", " \t"),
+        ("policy_version", ""),
+        ("policy_version", "\n "),
+        ("registry_version", ""),
+        ("registry_version", " \r\n"),
+    ],
+)
+def test_audience_filter_provenance_rejects_blank_identifiers(
+    field_name: str, value: str
+) -> None:
+    provenance = search_result().audience
+    setattr(provenance, field_name, value)
+    assert_invalid(provenance)
 
 
 def test_search_result_rejects_duplicate_contribution_lanes() -> None:
@@ -456,6 +494,9 @@ async def exercise_generated_connect_asgi() -> tuple[dict[str, Any], dict[str, A
 
 def test_generated_connect_asgi_endpoints_and_client_lifecycle() -> None:
     title_body, episode_body = asyncio.run(exercise_generated_connect_asgi())
+
+    assert title_body == json.loads(MessageToJson(title_response()))
+    assert episode_body == json.loads(MessageToJson(episode_response()))
 
     result = title_body["results"][0]
     assert result["resourceId"] == "series-1"

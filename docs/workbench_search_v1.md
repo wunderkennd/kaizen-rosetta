@@ -64,9 +64,9 @@ whitespace-only value is wire-valid if it satisfies the byte bound.
 | `EpisodeSearchDetail.season_display` | 0–128 bytes; whitespace permitted |
 | `EpisodeSearchDetail.episode_display` | 0–128 bytes; whitespace permitted |
 | `RetrievalContribution.rank` | 1–1,000 |
-| `AudienceFilterProvenance.policy_id` | 1–128 bytes; whitespace-only values are permitted |
-| `AudienceFilterProvenance.policy_version` | 1–64 bytes; whitespace-only values are permitted |
-| `AudienceFilterProvenance.registry_version` | 1–64 bytes; whitespace-only values are permitted |
+| `AudienceFilterProvenance.policy_id` | 1–128 bytes; non-whitespace |
+| `AudienceFilterProvenance.policy_version` | 1–64 bytes; non-whitespace |
+| `AudienceFilterProvenance.registry_version` | 1–64 bytes; non-whitespace |
 | `SearchResult.resource_id` | 1–256 bytes; non-whitespace |
 | `SearchResult.display_title` | 1–512 bytes; non-whitespace |
 | `SearchResult.description` | 0–2,048 bytes; whitespace permitted |
@@ -109,6 +109,7 @@ absent for every other routing mode.
 | `SearchTitlesResponse.correlation_id` | 1–128 bytes; non-whitespace |
 | `EpisodeResource.resource_id` | 1–256 bytes; non-whitespace |
 | `EpisodeResource.parent_title_id` | 1–256 bytes; non-whitespace |
+| `EpisodeResource.resource_kind` | Exactly `RESOURCE_KIND_EPISODE` |
 | `EpisodeResource.display_title` | 1–512 bytes; non-whitespace |
 | `EpisodeResource.season_display` | 0–128 bytes; whitespace permitted |
 | `EpisodeResource.episode_display` | 0–128 bytes; whitespace permitted |
@@ -137,6 +138,9 @@ Required message/relationship rules are also part of validation:
 - title scope forbids a present `SearchTitlesRequest.parent_title_id`;
 - every `SearchResult` requires exactly one title/episode detail whose type
   agrees with `resource_kind`, plus audience provenance;
+- every `EpisodeResource` requires `RESOURCE_KIND_EPISODE`; the pinned
+  Protovalidate toolchain enforces the published enum member with the
+  equivalent message CEL expression `this.resource_kind == 3`;
 - `SearchSourceManifest.source`, `SearchTitlesResponse.routing`, and
   `SearchTitlesResponse.source` are required; and
 - enum fields marked `defined_only` reject unknown numeric values, and the
@@ -144,6 +148,23 @@ Required message/relationship rules are also part of validation:
 
 These wire rules bound accepted messages. Workbench can impose stricter
 operational limits without changing the contract.
+
+## Workbench producer and transport obligations
+
+`SearchTitlesResponse.results` must be serialized in ascending `final_rank`
+order. Rosetta's current Protovalidate rules enforce that rank values are
+one-based, unique, and contiguous, but they do not enforce the physical order
+of the repeated list. Monotonic serialization is therefore a Workbench
+producer invariant. Workbench #7 acceptance tests must cover that the emitted
+list order is ascending by `final_rank`.
+
+Both requests carry an optional body `request_id`, bounded to 128 bytes. That
+portable protobuf value does not replace the trusted-renderer transport
+requirement for an `x-request-id` header. Rosetta owns the optional body field;
+Workbench middleware owns and enforces the header because HTTP headers are
+outside message-level Protovalidate. Workbench #7 transport acceptance tests
+must cover header enforcement, including that a body `request_id` alone does
+not satisfy the trusted-renderer requirement.
 
 ## Closed provenance and outcome vocabulary
 

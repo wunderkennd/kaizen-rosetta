@@ -312,6 +312,43 @@ class WorkbenchSearchSchemaTests(unittest.TestCase):
             },
         )
 
+        episode_rules = cel_expressions(
+            extension_value(
+                messages["EpisodeResource"].options,
+                self.pool,
+                "buf.validate.message",
+            )
+        )
+        self.assertEqual(
+            episode_rules,
+            {
+                "episode_resource.episode_kind": (
+                    "this.resource_kind == 3"
+                ),
+            },
+        )
+
+    def test_audience_provenance_identifiers_are_nonblank(self) -> None:
+        schema = self.search_schema()
+        provenance = next(
+            message
+            for message in schema.message_type
+            if message.name == "AudienceFilterProvenance"
+        )
+        fields = {field.name: field for field in provenance.field}
+
+        for name in ("policy_id", "policy_version", "registry_version"):
+            constraints = extension_value(
+                fields[name].options,
+                self.pool,
+                "buf.validate.field",
+            )
+            self.assertEqual(
+                constraints.string.pattern,
+                r"\S",
+                f"{name} must contain a non-whitespace character",
+            )
+
     def test_search_wire_surface_omits_provider_details(self) -> None:
         schema = self.search_schema()
         for message in schema.message_type:
