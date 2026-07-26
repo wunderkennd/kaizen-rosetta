@@ -1,3 +1,6 @@
 /gen/
 __pycache__/
 *.egg-info/
+/.worktrees/
+/.superpowers/
+/tools/compatibility/rust/target/

@@ -49,6 +49,15 @@ jobs:
         with:
           node-version: "25.2.1"
 
+      - name: Install Rust 1.88.0
+        run: rustup toolchain install 1.88.0 --profile minimal
+
+      - name: Certify Connect-Rust contracts
+        env:
+          ROSETTA_RUST_BSR_COMMIT: 045c39860c9c40178a3a1ed3088c218f
+          ROSETTA_RUST_DESCRIPTOR_SHA256: 077c2d8d31c41bcdac5bc97ed1e6407dfdae95a80e0d86712c960b997dc254fa
+        run: just rust-contracts
+
       - name: Run deterministic checks and release-manifest builder fixtures
         # This released commit is test input only. No candidate manifest is
         # created until a release supplies the BSR commit returned by buf push.

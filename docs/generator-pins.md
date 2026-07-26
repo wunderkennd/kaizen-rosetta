@@ -4,6 +4,16 @@ Rosetta pins every remote code generator by released version and BSR revision
 so local builds and release artifacts do not change when a plugin publishes a
 new release or rebuild.
 
+Go consumers receive BSR-generated module coordinates from the remote pins
+below. Rust v1 deliberately does not add a remote generator to `buf.gen.yaml`:
+it consumes an immutable schema export from a pinned BSR module commit through
+locked Cargo `build.rs` generation. Its Rust 1.88.0, `connectrpc` 0.7.0,
+`connectrpc-build` 0.7.0, `buffa` 0.7.1, and `buffa-types` 0.7.1 pins are
+consumer-compatibility pins recorded in Cargo files, not entries in
+`buf.gen.yaml`. This asymmetry remains in force until the BSR-generated Cargo
+adoption trigger in
+[`ADR 0003`](decisions/0003-rust-contract-distribution.md) is satisfied.
+
 ## Selected releases
 
 Selection date: 2026-07-12. Each selection is the newest non-prerelease
@@ -71,6 +81,22 @@ descriptor set and requires byte identity with the locally generated
 descriptor, whose recorded SHA-256 digest is independently recomputed. SDK
 resolution and successful exact-coordinate checks therefore cannot attach a
 manifest to an unrelated, otherwise valid BSR commit.
+
+Rust certification remains a separate consumer-compatibility path. Before
+release-manifest assembly, `just release-manifest` runs `just rust-contracts`
+with `ROSETTA_RUST_BSR_COMMIT` equal to the exact `BSR_MODULE_COMMIT` returned
+by `buf push`. The validator binds the resulting evidence to that BSR commit,
+the SHA-256 produced by `just descriptor`, the repository Git commit, and the
+tracked Rust `Cargo.lock`. It also requires the fixed Rust/Cargo and crate
+versions, the `rust-contracts-v1` canary identity, all five checks, and a passed
+status.
+
+The release manifest records the normalized evidence only at
+`consumerCompatibility.rust`. Existing `generators`, `generatedSdks`, and
+`retiredGenerators` remain unchanged; Rust gains no invented remote generator,
+SDK coordinate, or publication status. Missing, malformed, stale, duplicated,
+failed, or dirty-source evidence fails the release rather than producing a
+partial claim.
 
 ConnectRPC Python v0.11.0 is published but is not directly usable for Rosetta's
 nested service packages: its BSR wheel retains the known beyond-top-level

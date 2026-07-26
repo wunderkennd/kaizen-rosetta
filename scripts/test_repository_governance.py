@@ -39,6 +39,26 @@ class RepositoryGovernanceTests(unittest.TestCase):
         job_before_steps = verify_job.split("    steps:\n", 1)[0]
         self.assertNotIn("BUF_TOKEN", job_before_steps)
 
+    def test_rust_distribution_decision_is_explicit_and_runtime_neutral(self) -> None:
+        decision = (
+            ROOT / "docs/decisions/0003-rust-contract-distribution.md"
+        ).read_text()
+        for required in (
+            "Cargo build.rs from an immutable BSR export",
+            "Rust 1.88.0",
+            "connectrpc = 0.7.0",
+            "connectrpc-build = 0.7.0",
+            "buffa = 0.7.1",
+            "buffa-types = 0.7.1",
+            "consumer repositories own runtime handlers",
+            "BSR-generated Cargo adoption trigger",
+        ):
+            self.assertIn(required, decision)
+
+        buf_gen = (ROOT / "buf.gen.yaml").read_text()
+        self.assertNotIn("connectrpc/rust", buf_gen)
+        self.assertNotIn("connect-rust", buf_gen)
+
 
 if __name__ == "__main__":
     unittest.main()

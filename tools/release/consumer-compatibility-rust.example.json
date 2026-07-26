@@ -1,0 +1,32 @@
+{
+  "records": [
+    {
+      "adapter": "connect-rust",
+      "bsrModule": "buf.build/kaizen/rosetta",
+      "bsrModuleCommit": "045c39860c9c40178a3a1ed3088c218f",
+      "canary": "rust-contracts-v1",
+      "cargoLockSha256": "0fae1a8ccf12653ea73c353d5da13ed48adb4525088cd210205118bb2ce6c3d5",
+      "cargoVersion": "1.88.0",
+      "checks": [
+        "all-generated-packages",
+        "audience-binary",
+        "audience-protojson",
+        "server-streaming-interface",
+        "unary-interface"
+      ],
+      "crateVersions": {
+        "buffa": "0.7.1",
+        "buffa-types": "0.7.1",
+        "connectrpc": "0.7.0",
+        "connectrpc-build": "0.7.0"
+      },
+      "descriptorSha256": "077c2d8d31c41bcdac5bc97ed1e6407dfdae95a80e0d86712c960b997dc254fa",
+      "generationMode": "cargo-build-rs-bsr-export",
+      "gitCommit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "rustVersion": "1.88.0",
+      "schema": "rosetta.consumer-compatibility.rust.v1",
+      "status": "passed"
+    }
+  ],
+  "schema": "rosetta.consumer-compatibility.v1"
+}
