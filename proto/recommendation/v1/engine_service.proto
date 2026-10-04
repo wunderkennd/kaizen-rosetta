@@ -44,6 +44,21 @@ message GenerateCandidatesRequest {
 
   // Territory/locale for catalog filtering.
   string territory = 4;
+
+  // Per-seed similar-items lists from the SIMS model (Redis sims:<item_id>
+  // keys written by page-config-worker-svc), keyed by seed item_id. Keyed by
+  // seed rather than per-collection because seed-to-collection assignment
+  // happens inside the Rust BecauseYouWatched recommender (by watched_on
+  // recency; the gateway mirrors that ordering when selecting which seeds
+  // to fetch). Empty map = engine falls back to global relevance scores
+  // for BYW rails.
+  map<string, SimilarItems> sims = 5;
+}
+
+// SimilarItems is an ordered similar-items list for one seed item
+// (best match first, as ranked by the SIMS model).
+message SimilarItems {
+  repeated string item_ids = 1;
 }
 
 message GenerateCandidatesResponse {
