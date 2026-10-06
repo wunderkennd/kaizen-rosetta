@@ -1,0 +1,90 @@
+syntax = "proto3";
+
+// Recovered from the protoc-gen-go output checked into kaizen-curation
+// (content-promotion-go/internal/pb), whose embedded file descriptor was the
+// only surviving copy of this schema. The original package was wbd.protobuf.contentpromotion.campaign.v1;
+// field names, numbers and types are unchanged, so the binary wire format is
+// identical to messages produced or consumed under the old package name.
+package kaizen.protobuf.contentpromotion.campaign.v1;
+
+import "kaizen/protobuf/shared/v1/time.proto";
+
+// A piece of content a Campaign promotes, together with where and when it may
+// be promoted.
+message CampaignCandidate {
+  // The id of the Campaign candidate.
+  // Immutable and globally unique.
+  string id = 1;
+  // The realm where the Campaign candidate exists. Examples: go, dplus,
+  // dplusapac.
+  // Immutable.
+  string realm = 2;
+  // The content subset this candidate exists in.
+  // Immutable, optional (set for content references which are subset scoped).
+  string content_subset_id = 3;
+  // The reference to the actual candidate. Can be different content types.
+  // Content reference is only valid in the scope of the realm.
+  // Immutable.
+  ContentReference content_reference = 4;
+  // The candidate is only promoted when it matches the attributes of the
+  // promotion target. Use this to filter candidates.
+  PromotionTarget promotion_target = 5;
+  // A reference to the Campaign which this candidate belongs to.
+  // Can be used for attribution.
+  CampaignReference campaign_reference = 6;
+}
+
+// Where and when a candidate may be promoted.
+message PromotionTarget {
+  // The candidate is only valid within the promotion time windows.
+  repeated PromotionWindow promotion_window = 1;
+  // The candidate is only valid for requests matching the referenced audience.
+  repeated AudienceReference audience_reference = 2;
+}
+
+// A ContentReference is an immutable reference to a content entity inside a
+// given realm. Should not contain anything except the identifier of the
+// content. Must not contain mutable attributes of the content.
+message ContentReference {
+  // Unique (within a realm), immutable identifier of the content.
+  // Example: 187643.
+  string content_id = 1;
+  // Content type is a classification of the content.
+  // Example values: channel, show, video, taxonomyNode.
+  string content_type = 2;
+}
+
+// A time window during which a candidate is promoted, with an optional medal.
+message PromotionWindow {
+  // The time window determines if the schedule is active at a particular time.
+  // A schedule is not active before the specified "from" timestamp.
+  // A missing "from" timestamp means that the schedule is already started.
+  // A schedule is not active after the specified "to" timestamp.
+  // A missing "to" timestamp means that the schedule never ends.
+  // The time_window field is always set, but can be empty (no "from" or "to").
+  // An empty time_window means that the schedule is unrestricted, ie always
+  // active.
+  kaizen.protobuf.shared.v1.TimeWindow time_window = 1;
+  // The scheduled medal value for the candidate, if specified. Optional.
+  Medal medal = 2;
+}
+
+// A Medal is used to boost a Candidate, via its PromotionWindow.
+message Medal {
+  // The name of the medal. Example values: platinum, gold, silver.
+  // Allowed values are not restricted by the model.
+  string name = 1;
+}
+
+// Reference to an audience the candidate is restricted to.
+message AudienceReference {
+  // The id of the Audience.
+  string id = 1;
+}
+
+// Reference to the owning Campaign. Can be used for attribution.
+message CampaignReference {
+  // The id of the Campaign.
+  // Immutable, globally unique.
+  string id = 1;
+}

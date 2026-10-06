@@ -44,8 +44,11 @@ kaizen-rosetta/
     │
     └── kaizen/
         ├── audience/v1/           # Neutral typed audience contracts and diagnostics
-        └── protobuf/metadata/     # Reconstructed external metadata contracts
-            └── program/v4/        # Temporary external campaign subset; not the source of truth
+        └── protobuf/
+            ├── contentpromotion/campaign/v1/  # Campaign candidates published by kaizen-curation's content-promotion-go
+            ├── shared/v1/                     # Message metadata and time windows shared by the protobuf.* contracts
+            └── metadata/                      # Reconstructed external metadata contracts
+                └── program/v4/                # Temporary external campaign subset; not the source of truth
 ```
 
 ---

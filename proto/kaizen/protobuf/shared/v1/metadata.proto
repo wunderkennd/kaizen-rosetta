@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+// Recovered from the protoc-gen-go output checked into kaizen-curation
+// (content-promotion-go/internal/pb), whose embedded file descriptor was the
+// only surviving copy of this schema. The original package was wbd.protobuf.shared.v1;
+// field names, numbers and types are unchanged, so the binary wire format is
+// identical to messages produced or consumed under the old package name.
+package kaizen.protobuf.shared.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// Correlation metadata carried by messages that only need a trace id.
+message Metadata {
+  string correlation_id = 1;
+}
+
+// Identifies the system that produced a message.
+message SourceSystem {
+  // Name of the source system.
+  string name = 1;
+  // Version of the source system.
+  string version = 2;
+  // Environment where the source system is running, e.g. eu1-prod, eu1-test.
+  string environment = 3;
+}
+
+// Envelope metadata attached to every published message.
+message MessageMetadata {
+  // UUID generated for a message. Enables consumers to detect duplicates.
+  string message_id = 1;
+  // UUID generated for tracing. The value can originate from e.g. a http
+  // request's UUID.
+  string correlation_id = 2;
+  // Timestamp for when the message was created.
+  google.protobuf.Timestamp created_at = 3;
+  // Source system information.
+  SourceSystem source_system = 4;
+}
