@@ -1,0 +1,64 @@
+syntax = "proto3";
+
+package page_structure.v1;
+
+import "request_context/v1/request_context.proto";
+
+// PageStructureService resolves and serves page layouts (rails and items).
+// Served by alchemy-clean's page-structure crate; alchemy-clean vendors this
+// file at a pinned rosetta commit.
+service PageStructureService {
+  // Heartbeat. Trivial; no I/O.
+  rpc Ping(PingRequest) returns (PingResponse);
+
+  // Resolve the page structure key for a (page_id, request_context) pair.
+  // Performs: capability → packages → cohort → audiences → key lookup.
+  // Returns NOT_FOUND if no audiences exist for the cohort or no key exists.
+  rpc GetKey(GetKeyRequest) returns (GetKeyResponse);
+
+  // Fetch the page structure for a given key. The key comes from GetKey.
+  // Returns NOT_FOUND if the key has no entry.
+  rpc GetPageStructure(GetPageStructureRequest) returns (GetPageStructureResponse);
+}
+
+message PingRequest {}
+message PingResponse {
+  string status = 1;
+}
+
+message GetKeyRequest {
+  string page_id = 1;
+  request_context.v1.RequestContext request_context = 2;
+}
+message GetKeyResponse {
+  PageStructureKey page_structure_key = 1;
+}
+
+message PageStructureKey {
+  string page_id = 1;
+  string cohort_key = 2;
+}
+
+// EVOLVED from M2a: was {territory, page_id}, now takes a PageStructureKey.
+// The cohort_key in the key encapsulates the territory + cohort + audience info.
+message GetPageStructureRequest {
+  PageStructureKey page_structure_key = 1;
+}
+message GetPageStructureResponse {
+  PageStructure page_structure = 1;
+}
+
+message PageStructure {
+  string id = 1;
+  string territory = 2;
+  repeated Rail rails = 3;
+}
+
+message Rail {
+  string id = 1;
+  repeated Item items = 2;
+}
+
+message Item {
+  string id = 1;
+}

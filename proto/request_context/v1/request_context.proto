@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package request_context.v1;
+
+// Minimal per-request session context read by alchemy-clean's
+// PageStructureService.GetKey. Owned here; alchemy-clean vendors it at a
+// pinned rosetta commit. Deliberately not a copy of the legacy
+// `sessioncontext.hydration.v4.RequestContext` (see alchemy-clean
+// ADR-0006). Add fields additively as new port slices need them.
+message RequestContext {
+  RequestContent content = 1;
+  Capabilities capabilities = 2;
+  CustomerSegments customer_segments = 3;
+}
+
+message RequestContent {
+  string cex_territory = 1;
+}
+
+message Capabilities {
+  repeated Capability active = 1;
+}
+
+message Capability {
+  string id = 1;
+}
+
+message CustomerSegments {
+  repeated string segment_ids = 1;
+}

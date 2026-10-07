@@ -42,6 +42,9 @@ kaizen-rosetta/
     │   ├── engine_service.proto   # Candidate re-ranking engine gRPC interface
     │   └── service.proto          # PageRecommendationService client/server interfaces
     │
+    ├── page_structure/v1/         # PageStructureService (Ping, GetKey, GetPageStructure); served by alchemy-clean
+    ├── request_context/v1/        # Minimal per-request session context read by page_structure.v1 GetKey
+    │
     └── kaizen/
         ├── audience/v1/           # Neutral typed audience contracts and diagnostics
         └── protobuf/
