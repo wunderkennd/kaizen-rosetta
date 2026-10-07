@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+// Recovered from the protoc-gen-go output checked into kaizen-curation
+// (content-promotion-go/internal/pb), whose embedded file descriptor was the
+// only surviving copy of this schema. The original package was wbd.protobuf.shared.v1;
+// field names, numbers and types are unchanged, so the binary wire format is
+// identical to messages produced or consumed under the old package name.
+package kaizen.protobuf.shared.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// A half-open time range. A missing bound means the range is unbounded on
+// that side.
+message TimeWindow {
+  google.protobuf.Timestamp from = 1;
+  google.protobuf.Timestamp to = 2;
+}

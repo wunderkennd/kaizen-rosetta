@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+// Recovered from the protoc-gen-go output checked into kaizen-curation
+// (content-promotion-go/internal/pb), whose embedded file descriptor was the
+// only surviving copy of this schema. The original package was wbd.protobuf.contentpromotion.campaign.v1;
+// field names, numbers and types are unchanged, so the binary wire format is
+// identical to messages produced or consumed under the old package name.
+package kaizen.protobuf.contentpromotion.campaign.v1;
+
+import "kaizen/protobuf/contentpromotion/campaign/v1/model.proto";
+import "kaizen/protobuf/shared/v1/metadata.proto";
+
+// This message is produced when a Campaign is published from the Content
+// Promotion service (kaizen-curation content-promotion-go) to the Kafka topic
+// entity.content-promotion.campaign-candidate.v1, keyed by candidate id.
+// A single Campaign normally contains several candidates, so publishing a
+// Campaign results in multiple of these messages. Unpublishing a candidate is
+// a tombstone (null value) on the same key.
+message CampaignCandidateMessage {
+  kaizen.protobuf.shared.v1.MessageMetadata metadata = 1;
+  CampaignCandidate candidate = 2;
+}
